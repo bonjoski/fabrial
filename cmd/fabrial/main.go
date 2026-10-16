@@ -15,7 +15,7 @@ import (
 	"github.com/bonjoski/airlock/pkg/bridge"
 	"github.com/bonjoski/airlock/pkg/doctor"
 	"github.com/bonjoski/airlock/pkg/secrets"
-	"github.com/bonjoski/airlock/pkg/version"
+	"github.com/bonjoski/fabrial/pkg/version"
 )
 
 func main() {

@@ -6,7 +6,7 @@
 class Fabrial < Formula
   desc "Sovereign AI Agent Security Fabric: Unifying Airlock, Locksmith, Aegisbox, and Argus"
   homepage "https://github.com/bonjoski/fabrial"
-  url "https://github.com/bonjoski/fabrial/archive/refs/tags/v1.0.0.tar.gz"
+  url "https://github.com/bonjoski/fabrial/archive/refs/tags/v0.2.0.tar.gz"
   sha256 "PLACEHOLDER_SOURCE_SHA256"
   license "Apache-2.0"
   head "https://github.com/bonjoski/fabrial.git", branch: "main"
@@ -20,9 +20,9 @@ class Fabrial < Formula
   def install
     ldflags = %W[
       -s -w
-      -X github.com/bonjoski/airlock/pkg/version.Version=#{version}
-      -X github.com/bonjoski/airlock/pkg/version.Commit=brew
-      -X github.com/bonjoski/airlock/pkg/version.BuildTime=#{time.iso8601}
+      -X github.com/bonjoski/fabrial/pkg/version.Version=#{version}
+      -X github.com/bonjoski/fabrial/pkg/version.Commit=brew
+      -X github.com/bonjoski/fabrial/pkg/version.BuildTime=#{time.iso8601}
     ]
 
     system "go", "build", *std_go_args(output: bin/"fabrial", ldflags: ldflags.join(" ")), "./cmd/fabrial"
