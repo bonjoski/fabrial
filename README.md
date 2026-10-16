@@ -1,87 +1,39 @@
+<div align="center">
+
 # 💎 Fabrial
 
-> **The Sovereign AI Agent Security Fabric**  
-> *Unifying Airlock, Locksmith, Aegisbox, and Argus into an integrated zero-trust runtime for autonomous AI coding agents.*
+### The Sovereign AI Agent Security Fabric
+**Give autonomous coding agents the freedom to build without giving them the keys to your kingdom.**
 
-[![Go Version](https://img.shields.io/badge/go-1.27%2B-blue.svg)](https://golang.org)
-[![Security](https://img.shields.io/badge/architecture-zero--trust-green.svg)](https://github.com/bonjoski/fabrial)
-[![Self-Sovereign](https://img.shields.io/badge/SaaS-none%20(100%25%20local)-blueviolet.svg)](https://github.com/bonjoski/fabrial)
-
----
-
-## 📖 The Name & Vision
-
-In Brandon Sanderson's *The Stormlight Archive*, **fabrials** are devices that capture elemental forces within gemstones to manifest extraordinary capabilities—sensing approaching danger (warning fabrials), creating impenetrable barriers (conjoiner fabrials), or projecting precision force.
-
-**Fabrial** brings this paradigm to autonomous software engineering:
-AI coding agents (Claude Code, Cursor, OpenCode, Aider, Devin) must possess immense creative capability to edit code, install packages, and run tests. But granting an autonomous agent raw shell access with ambient developer credentials (`~/.ssh`, `~/.aws`, `.env`) on an unfiltered network is an invitation to catastrophic supply chain poisoning or prompt-injection jailbreaks.
-
-**Fabrial harnesses this power**—containing execution in hardware-isolated, kernel-enforced boundaries, streaming audited telemetry without cloud dependencies, and checking out credentials dynamically with sub-second leases that vanish the moment an agent finishes its work.
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![Go Version](https://img.shields.io/badge/go-1.27%2B-00ADD8.svg?logo=go)](https://golang.org)
+[![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/bonjoski/fabrial)
+[![Zero-SaaS](https://img.shields.io/badge/SaaS-Zero%20(100%25%20Local)-blueviolet.svg)](#-zero-saas-self-sovereignty)
+[![Overhead](https://img.shields.io/badge/latency-%3C15ms%20Tier%201-success.svg)](#-two-isolation-tiers)
 
 ---
 
-## 🏛️ The Four Pillars
+**Fabrial** unifies four specialized, developer-owned security engines—**Airlock**, **Locksmith**, **Aegisbox**, and **Argus**—into an integrated zero-trust runtime designed specifically for autonomous AI coding agents (Claude Code, Cursor, OpenCode, Aider, Devin).
 
-```mermaid
-graph TD
-    Agent[🤖 Autonomous AI Agent\nClaude Code / Cursor / Aider] -->|1. Shell Invocation| Fabrial[💎 Fabrial Orchestrator]
-    
-    subgraph "Fabrial Sovereign Security Runtime"
-        Fabrial -->|Pre-Gate Inspection| Argus[👁️ Argus\nAST Guard & Telemetry Ring Buffer]
-        Fabrial -->|Dynamic Credential Lease| Locksmith[🔐 Locksmith\nBiometric Vault & ETX Lease Daemon]
-        Fabrial -->|Execution Boundary| TierChoice{Isolation Tier?}
-        
-        TierChoice -->|Tier 1: <15ms| Airlock[🛡️ Airlock\nSeatbelt / Landlock Kernel Sandbox]
-        TierChoice -->|Tier 2: ~100ms| Aegisbox[📦 Aegisbox\nApple VZ / KVM MicroVM]
-    end
-
-    Argus -->|Anomaly / Exfil Detection| Killswitch[⚡ Active Killswitch]
-    Killswitch -->|SIGKILL Target PID| Airlock
-    Killswitch -->|Immediate Lease Revoke| Locksmith
-```
-
-1. **[Airlock](https://github.com/bonjoski/airlock)**: **Kernel Sandbox Engine (Tier 1)**
-   - Apple Seatbelt (`sandbox_init`) & Linux Landlock/Seccomp confinement (<15ms overhead).
-   - Strict `agent` profile: pinned package registries (npm, PyPI, Go proxy, Crates), blocked ambient credentials (`~/.ssh`, `~/.aws`, `~/.kube`, `.env*`), and `TIOCSTI` terminal injection mitigation.
-
-2. **[Locksmith](https://github.com/bonjoski/locksmith)**: **Ephemeral Secret Vault & Lease Engine**
-   - Developer-owned hardware keychain integration (macOS Keychain, Touch ID / Windows Hello).
-   - Kernel-attested local IPC (`LOCAL_PEERPID` / `SO_PEERCRED`) with start-time verification to defeat PID recycling.
-   - Dynamic ephemeral credential checkout with zero-residual memory scrubbing (`Zero()`) and orphan scavenger daemon.
-
-3. **[Aegisbox](https://github.com/bonjoski/aegisbox)**: **Hypervisor MicroVM Engine (Tier 2)**
-   - Hardware-assisted virtualization boundary (Apple Virtualization Framework / Linux KVM).
-   - Ephemeral copy-on-write guest environments with rootfs rollback on exit.
-
-4. **[Argus](https://github.com/bonjoski/argus)**: **Telemetry Ring Buffer & Active Killswitch**
-   - Sub-millisecond non-blocking telemetry sink (~308µs per event) with zero agent deadlock risk.
-   - Normalized CEF & OpenTelemetry logging.
-   - Active cascading killswitch: automatically terminates rogue processes (`SIGKILL`) and immediately revokes all active secret leases upon critical tripwire violations.
+</div>
 
 ---
 
-## 🚀 Installation
+## ⚡ The 60-Second Quickstart
 
-### Homebrew (macOS / Linux)
+### 1. Install
 ```bash
+# Via Homebrew (macOS / Linux)
 brew tap bonjoski/tap
 brew install fabrial
-```
 
-### From Source
-```bash
+# Or build from source
 git clone https://github.com/bonjoski/fabrial.git
-cd fabrial
-go build -o bin/fabrial ./cmd/fabrial
-sudo mv bin/fabrial /usr/local/bin/
+cd fabrial && make install
 ```
 
----
-
-## ⚡ Usage
-
-### 1. Verify Subsystem Health
-Run the diagnostic suite across all 4 security pillars:
+### 2. Verify Your Security Fabric
+Ensure all local security engines are operating and kernel hooks are available:
 ```bash
 fabrial doctor
 ```
@@ -95,33 +47,189 @@ fabrial doctor
 ─────────────────────────────────────────────────────────────────
 ```
 
-### 2. Tier 1 Kernel Confinement (<15ms Overhead)
-Run untrusted agent commands under the hardened `agent` profile:
+### 3. Run Sandboxed Agent Commands
+Wrap any command under the hardened `agent` profile:
 ```bash
+# Fast Tier 1 Kernel Sandbox (<15ms overhead)
 fabrial exec --profile agent -- npm test
-```
 
-### 3. Tier 2 Hypervisor MicroVM Confinement (~100ms Overhead)
-Run completely untrusted or hostile scripts inside an ephemeral hardware microVM:
-```bash
-fabrial exec --profile agent --microvm -- python3 build.py
-```
-
-### 4. Ephemeral Secret Leases (No Raw Env Dumps)
-Check out secrets dynamically via Locksmith. Credentials exist only in memory inside the sandbox and are revoked immediately on exit:
-```bash
-fabrial exec --profile agent --lease-secret GITHUB_TOKEN,OPENAI_API_KEY -- npx release-it
+# Deep Tier 2 MicroVM Sandbox (~100ms overhead, copy-on-write guest)
+fabrial exec --profile agent --microvm -- python3 untrusted_script.py
 ```
 
 ---
 
-## 🔒 Security Guarantees & Philosophy
+## 🚨 The Agent Security Dilemma
 
-- **Zero-SaaS Self-Sovereignty**: 100% of telemetry, enforcement, encryption, and sandboxing runs locally on your workstation. No third-party clouds or external daemons.
-- **Fail-Closed by Design**: If Locksmith fails peer attestation, or Aegisbox cannot provision a microVM, or Argus detects process hijacking, the runtime halts execution instantly.
-- **Memory Scrubbing**: All cryptographic keys and leased tokens implement explicit volatile memory zeroing before garbage collection.
+Autonomous AI coding agents need shell execution to run tests, compile code, and install dependencies. However, granting an LLM raw subshell access creates severe attack vectors:
+
+| Attack Vector | What Happens Without Fabrial | How Fabrial Defends |
+| :--- | :--- | :--- |
+| **Credential Theft** | Agent or malicious sub-script reads `~/.ssh`, `~/.aws`, `~/.kube`, or `.env`. | **Denied by Default**: Blocked at the kernel VFS layer via Seatbelt / Landlock. |
+| **Data Exfiltration** | Malicious script curls sensitive source code to an external server. | **Pinned Network Egress**: Strict allowlist (OpenAI, Anthropic, npm, PyPI, Crates, Go proxy). All other outbound traffic dropped. |
+| **Prompt Injection Hijack** | A poisoned README or dependency forces terminal queue injection (`TIOCSTI`). | **PTY Sanitization**: Terminal input queue manipulation neutralized via stdin detachment and kernel filtering. |
+| **Long-Lived Secret Exposure** | Ambient API keys dumped in environment variables remain exposed. | **Ephemeral ETX Leases**: Checked out dynamically in-memory via Locksmith; automatically revoked and zeroed upon command exit. |
+| **Supply Chain Host Compromise** | Malicious postinstall script modifies system files or launches daemon. | **Tier 2 MicroVM**: Completely isolated hardware virtualization boundary with rollback on exit. |
 
 ---
 
-## 📜 License
-Apache-2.0 © Ben Skolmoski
+## 🏛️ The Four Pillars of Fabrial
+
+Fabrial orchestrates four purpose-built security engines operating locally on your workstation:
+
+```
+                      ┌────────────────────────────────────────┐
+                      │  🤖 Autonomous AI Agent (Claude/Cursor)│
+                      └──────────────────┬─────────────────────┘
+                                         │ 1. Invocation (fabrial exec)
+                                         ▼
+                      ┌────────────────────────────────────────┐
+                      │          💎 FABRIAL ORCHESTRATOR        │
+                      └────┬─────────────────┬─────────────┬───┘
+                           │                 │             │
+        2. Lease Secret    │   3. Stream     │             │ 4. Enforce Boundary
+        via Kernel IPC     │   Telemetry     │             │
+              ▼            ▼                 ▼             ▼
+      ┌───────────────┐ ┌───────────────┐ ┌─────────────┐ ┌─────────────┐
+      │  🔐 Locksmith │ │   👁️ Argus    │ │ 🛡️ Airlock   │ │ 📦 Aegisbox │
+      │ Ephemeral ETX │ │  Audit Ring   │ │ Tier 1      │ │ Tier 2      │
+      │ Secret Vault  │ │  Buffer & SIEM│ │ Kernel SB   │ │ MicroVM     │
+      └───────┬───────┘ └───────┬───────┘ └──────┬──────┘ └──────┬──────┘
+              │                 │                │               │
+              │                 ▼                │               │
+              │         [⚡ Killswitch]          │               │
+              │          Triggered on Anomaly    │               │
+              └─────────────── (Revoke) ◄────────┴───────────────┘
+```
+
+1. **[Airlock](https://github.com/bonjoski/airlock) — Tier 1 Kernel Sandbox Engine**
+   - Native macOS Apple Seatbelt (`sandbox_init`) and Linux Landlock / Seccomp confinement.
+   - Sub-15ms startup overhead—imperceptible in interactive developer workflows.
+   - Built-in `agent` profile enforcing credential blacklists and pinned network allowlists.
+
+2. **[Locksmith](https://github.com/bonjoski/locksmith) — Biometric Secret Vault & Lease Daemon**
+   - Stores master keys in developer-owned hardware keyrings (macOS Keychain, Touch ID, Windows Hello).
+   - Kernel-attested local UNIX socket IPC (`LOCAL_PEERPID` on Darwin, `SO_PEERCRED` on Linux) with process start-time verification to defeat PID recycling attacks.
+   - Leases ephemeral credentials directly into process memory; wipes memory on exit with active zombie scavenging.
+
+3. **[Aegisbox](https://github.com/bonjoski/aegisbox) — Tier 2 Hypervisor MicroVM Engine**
+   - Hardware-assisted microVM isolation powered by Apple Virtualization Framework (macOS) and Linux KVM.
+   - Ephemeral copy-on-write guest rootfs: every execution runs in a pristine sandbox that vanishes upon exit.
+
+4. **[Argus](https://github.com/bonjoski/argus) — Non-Blocking Telemetry Bus & Active Killswitch**
+   - Zero-lock ring buffer telemetry sink (<308µs overhead) ensuring the agent runtime never deadlocks or lags.
+   - Normalized Common Event Format (CEF) and OpenTelemetry output.
+   - Active cascading killswitch: upon tripwire breach, instantly issues `SIGKILL` to target processes and triggers emergency lease revocation in Locksmith.
+
+---
+
+## 🛡️ Two Isolation Tiers
+
+Choose the appropriate boundary based on risk profile:
+
+| Feature | Tier 1 (Airlock Kernel Confinement) | Tier 2 (Aegisbox MicroVM Confinement) |
+| :--- | :--- | :--- |
+| **Startup Overhead** | **< 15 ms** | **~ 100 ms** |
+| **Mechanism** | Apple Seatbelt / Linux Landlock | Apple Virtualization (VZ) / Linux KVM |
+| **Filesystem** | Local VFS with path restriction rules | Ephemeral copy-on-write virtual disk |
+| **Kernel Sharing** | Shared host OS kernel | Isolated guest Linux microkernel |
+| **Best For** | Test runners, linters, git workflows, compilers | Untrusted scripts, arbitrary npm/pip installs |
+| **Invocation** | `fabrial exec --profile agent -- <cmd>` | `fabrial exec --profile agent --microvm -- <cmd>` |
+
+---
+
+## 🤖 Real-World Agent Integrations
+
+### Claude Code
+Run Claude Code with automated permissions without worrying about hostile prompt injections or unintended data leaks:
+```bash
+fabrial exec --profile agent \
+  --lease-secret ANTHROPIC_API_KEY \
+  -- claude --dangerously-skip-permissions
+```
+
+### Cursor & Windsurf Terminal
+Configure your project's `.cursorrules` or terminal settings to wrap agent tasks through Fabrial:
+```json
+{
+  "terminal.integrated.profiles.osx": {
+    "Fabrial Sandbox": {
+      "path": "fabrial",
+      "args": ["exec", "--profile", "agent", "--", "zsh"]
+    }
+  }
+}
+```
+
+### Aider & OpenCode
+Allow autonomous pair-programming tools to execute tests and edits with zero ambient credential access:
+```bash
+fabrial exec --profile agent \
+  --lease-secret OPENAI_API_KEY,GITHUB_TOKEN \
+  -- aider
+```
+
+---
+
+## 🔐 Ephemeral Secret Leases (No Raw Env Dumps)
+
+Instead of leaving plaintext tokens in `.env` files or exporting them across your entire shell session, store them in your OS hardware keychain via Locksmith:
+
+```bash
+# 1. Store secret securely in hardware keychain
+locksmith set GITHUB_TOKEN
+
+# 2. Check out an ephemeral, time-bounded lease during execution
+fabrial exec --profile agent --lease-secret GITHUB_TOKEN -- npm run release
+```
+Inside the sandbox, `GITHUB_TOKEN` is injected strictly into the target process environment. The moment the process exits (or if it is terminated by Argus), the lease is immediately revoked and memory zeroed.
+
+---
+
+## 📖 CLI Reference
+
+### `fabrial exec`
+Executes a command inside the sovereign security runtime.
+
+```text
+Usage:
+  fabrial exec [flags] -- <command> [args...]
+
+Flags:
+  --profile <name>         Security profile: agent (default), strict, airgap
+  --microvm                Escalate to Tier 2 Aegisbox Hypervisor MicroVM
+  --lease-secret <keys>    Comma-separated list of secrets to lease via Locksmith
+  --session-ticket <tk>    Autonomous agent session ticket for batch loops
+  --airgap                 Block 100% of network traffic (offline mode)
+  --net                    Allow unconstrained outbound network access
+```
+
+### `fabrial doctor`
+Inspects system prerequisites, kernel sandbox support, and resident daemons.
+
+```bash
+fabrial doctor [--json]
+```
+
+### `fabrial version`
+Prints version and status of the unified security fabric.
+
+---
+
+## 🛡️ Invariants & Security Guarantees
+
+1. **Zero-SaaS Self-Sovereignty**: No telemetry, tokens, or execution data ever leave your machine. Zero cloud dependencies.
+2. **Fail-Closed by Design**: If peer attestation fails, if a socket permission is insecure (non-`0600`), or if microVM initialization encounters an error, execution halts immediately.
+3. **Anti-PID Recycling**: Peer attestation checks verify both PID and process start-time ticks via the kernel (`LOCAL_PEERPID` / proc status), defeating PID recycling attacks.
+4. **Active Scavenging**: If an agent process crashes or is killed with `SIGKILL`, Locksmith’s resident scavenger actively detects the dead PID and revokes its credentials.
+
+---
+
+## 📜 Name Origin
+In Brandon Sanderson’s *The Stormlight Archive*, **fabrials** are scientific-magical mechanisms created by infusing gemstones with elemental stormlight to sense approaching threats, project force fields, and harness raw power cleanly and safely.
+
+---
+
+## 📄 License
+Apache-2.0 License. See [LICENSE](LICENSE) for details.  
+Copyright © 2026 Ben Skolmoski.

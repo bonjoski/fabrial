@@ -5,11 +5,11 @@
 # The Sovereign AI Agent Security Fabric: Airlock, Locksmith, Aegisbox, and Argus.
 class Fabrial < Formula
   desc "Sovereign AI Agent Security Fabric: Unifying Airlock, Locksmith, Aegisbox, and Argus"
-  homepage "https://github.com/bonjoski/airlock"
-  url "https://github.com/bonjoski/airlock/archive/refs/tags/v0.6.0.tar.gz"
+  homepage "https://github.com/bonjoski/fabrial"
+  url "https://github.com/bonjoski/fabrial/archive/refs/tags/v1.0.0.tar.gz"
   sha256 "PLACEHOLDER_SOURCE_SHA256"
-  license "MIT"
-  head "https://github.com/bonjoski/airlock.git", branch: "main"
+  license "Apache-2.0"
+  head "https://github.com/bonjoski/fabrial.git", branch: "main"
 
   depends_on "go" => :build
 
@@ -25,9 +25,7 @@ class Fabrial < Formula
       -X github.com/bonjoski/airlock/pkg/version.BuildTime=#{time.iso8601}
     ]
 
-    system "go", "build", *std_go_args(ldflags: ldflags.join(" ")), "./cmd/airlock"
     system "go", "build", *std_go_args(output: bin/"fabrial", ldflags: ldflags.join(" ")), "./cmd/fabrial"
-    system "go", "build", *std_go_args(output: bin/"airlock-mcp", ldflags: ldflags.join(" ")), "./cmd/airlock-mcp"
   end
 
   def caveats
