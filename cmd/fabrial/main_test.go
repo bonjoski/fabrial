@@ -73,3 +73,13 @@ func TestFabrial_DoctorJSON(t *testing.T) {
 		t.Fatalf("expected JSON output containing Airlock pillar, got: %s", out)
 	}
 }
+
+func TestFabrial_DaemonStatus(t *testing.T) {
+	out := captureOutput(func() {
+		handleDaemon([]string{"status"})
+	})
+
+	if !strings.Contains(out, "Fabrial Multi-Pillar Diagnostic Suite") {
+		t.Fatalf("unexpected daemon status output: %s", out)
+	}
+}
