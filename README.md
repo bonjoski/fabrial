@@ -24,7 +24,7 @@
 ### 1. Install
 ```bash
 # Via Homebrew (macOS / Linux)
-brew tap bonjoski/fabrial
+brew tap bonjoski/tap
 brew install fabrial
 
 # Or build from source
