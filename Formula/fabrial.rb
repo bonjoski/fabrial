@@ -6,8 +6,8 @@
 class Fabrial < Formula
   desc "Sovereign AI Agent Security Fabric: Unifying Airlock, Locksmith, Aegisbox, and Argus"
   homepage "https://github.com/bonjoski/fabrial"
-  url "https://github.com/bonjoski/fabrial/archive/refs/tags/v0.2.0.tar.gz"
-  sha256 "a9cb1f28f3e26ff1607e5c957799c4bf66be2058c2e5ef200bf080b5aca5d574"
+  url "https://github.com/bonjoski/fabrial/archive/refs/tags/v0.3.0.tar.gz"
+  sha256 "6190c625e636361d3d6ea9425c523e0fe5aa6a61332adc190dea67a52ff29d37"
   license "Apache-2.0"
   head "https://github.com/bonjoski/fabrial.git", branch: "main"
 
