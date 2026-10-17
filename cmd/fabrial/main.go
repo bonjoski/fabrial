@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/bonjoski/airlock/pkg/bridge"
@@ -354,7 +353,7 @@ func stopDaemons() {
 		pidPath := filepath.Join(home, ".argus", "argus.pid")
 		if data, err := os.ReadFile(pidPath); err == nil {
 			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && pid > 0 {
-				_ = syscall.Kill(pid, syscall.SIGTERM)
+				_ = terminateProcess(pid)
 				_ = os.Remove(pidPath)
 				fmt.Printf("✔ Argus daemon stopped (PID %d)\n", pid)
 			}
@@ -367,7 +366,7 @@ func stopDaemons() {
 	stopped := false
 	if data, err := os.ReadFile(lsPidFile); err == nil {
 		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && pid > 0 {
-			if err := syscall.Kill(pid, syscall.SIGTERM); err == nil {
+			if err := terminateProcess(pid); err == nil {
 				fmt.Printf("✔ Locksmith daemon stopped (PID %d)\n", pid)
 				stopped = true
 			}
@@ -407,4 +406,12 @@ func resolveArgusSocketPath() string {
 		return tmpCandidate
 	}
 	return fmt.Sprintf("%s/argus.sock", os.TempDir())
+}
+
+func terminateProcess(pid int) error {
+	proc, err := os.FindProcess(pid)
+	if err != nil {
+		return err
+	}
+	return proc.Kill()
 }
