@@ -216,7 +216,7 @@ func Route(opts *ExecutionOptions, cmdArgs []string) (*Decision, error) {
 		targetEngine = "airlock"
 		bin, err := FindExecutable("airlock")
 		if err != nil {
-			return nil, fmt.Errorf("tier 1 routing error: %w", err)
+			bin = "airlock"
 		}
 		binPath = bin
 
@@ -248,7 +248,7 @@ func Route(opts *ExecutionOptions, cmdArgs []string) (*Decision, error) {
 			bin, err = FindExecutable("aegisbox")
 		}
 		if err != nil {
-			return nil, fmt.Errorf("tier 2 routing error: %w", err)
+			bin = "aegisbox"
 		}
 		binPath = bin
 
@@ -332,7 +332,6 @@ func FindExecutable(name string) (string, error) {
 		filepath.Join(home, ".local", "bin", name),
 		filepath.Join(home, "bin", name),
 		filepath.Join(home, "go", "bin", name),
-		filepath.Join("/Users/benskolmoski/code/aegisbox/bin", name),
 	}
 
 	for _, c := range candidates {

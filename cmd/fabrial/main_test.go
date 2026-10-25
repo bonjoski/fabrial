@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"net"
 	"os"
@@ -99,8 +100,9 @@ func TestFabrial_ResolveAegisboxSocket(t *testing.T) {
 
 	_ = os.Unsetenv("AEGISBOX_SOCKET")
 	sock := resolveAegisboxSocketPath()
-	if !strings.HasSuffix(sock, ".aegisbox/aegisboxd.sock") {
-		t.Fatalf("expected socket to end with .aegisbox/aegisboxd.sock, got: %s", sock)
+	expectedSuffix := filepath.Join(".aegisbox", "aegisboxd.sock")
+	if !strings.HasSuffix(sock, expectedSuffix) {
+		t.Fatalf("expected socket to end with %s, got: %s", expectedSuffix, sock)
 	}
 
 	// With env override
@@ -138,13 +140,25 @@ func TestFabrial_Doctor_AegisboxSocketOnline(t *testing.T) {
 		handleDoctor([]string{"--json"})
 	})
 
-	if !strings.Contains(out, `"pillar":"Aegisbox"`) {
+	var report []PillarHealth
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("failed to unmarshal doctor output: %v (raw: %s)", err, out)
+	}
+
+	found := false
+	for _, p := range report {
+		if p.Pillar == "Aegisbox" {
+			found = true
+			if p.Status != "ONLINE" {
+				t.Fatalf("expected Aegisbox to report ONLINE status when daemon socket is active, got: %s", p.Status)
+			}
+			if !strings.Contains(p.Details, sockPath) {
+				t.Fatalf("expected doctor output to reference socket path %s, got: %s", sockPath, p.Details)
+			}
+			break
+		}
+	}
+	if !found {
 		t.Fatalf("expected Aegisbox in doctor JSON: %s", out)
-	}
-	if !strings.Contains(out, `"status":"ONLINE"`) {
-		t.Fatalf("expected Aegisbox to report ONLINE status when daemon socket is active, got: %s", out)
-	}
-	if !strings.Contains(out, sockPath) {
-		t.Fatalf("expected doctor output to reference socket path %s, got: %s", sockPath, out)
 	}
 }
