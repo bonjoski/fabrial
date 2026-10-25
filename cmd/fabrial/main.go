@@ -17,6 +17,7 @@ import (
 	"github.com/bonjoski/airlock/pkg/bridge"
 	"github.com/bonjoski/airlock/pkg/doctor"
 	"github.com/bonjoski/airlock/pkg/secrets"
+	"github.com/bonjoski/fabrial/pkg/router"
 	"github.com/bonjoski/fabrial/pkg/version"
 )
 
@@ -58,9 +59,10 @@ func printUsage() {
 Unifying Airlock, Locksmith, Aegisbox, and Argus into an end-to-end agentic runtime.
 
 Usage:
-  fabrial exec [flags] -- <command> [args...]
+  fabrial run [flags] [--] <command> [args...]
+  fabrial exec [flags] [--] <command> [args...]
   fabrial doctor [--json]
-  fabrial daemon [status|start|stop]
+  fabrial daemon [status|start|stop|restart]
   fabrial version
 
 Core Execution Commands:
@@ -70,13 +72,27 @@ Core Execution Commands:
   # Deep Tier 2 MicroVM Confinement (~100ms via Aegisbox Apple VZ / KVM)
   fabrial exec --profile agent --microvm -- <command>
 
-Flags:
+Multi-Tier Dynamic Routing:
+  • Tier 1: Fast Kernel Confinement via Airlock (<15ms cold start)
+            Benign linting, formatting, read-only analysis (eslint, prettier, gofmt)
+  • Tier 2: Deep MicroVM Isolation via Aegisbox (~100ms hardware boundary)
+            Sensitive tools, package managers, network egress (npm, pip, cargo, python, bash)
+
+Policy Configuration:
+  fabrial automatically discovers repository-level 'fabrial.yaml' policies
+  to map commands and wildcards to Tier 1 or Tier 2 isolation boundaries.
+
+Execution Flags:
   --profile <name>      Execution profile (agent, strict, airgap, default)
-  --microvm             Tier 2 Confinement via Aegisbox hypervisor MicroVM
+  --tier <1|2>          Explicit execution tier override (1: Airlock, 2: Aegisbox)
+  --microvm             Tier 2 Confinement via Aegisbox hypervisor MicroVM (alias for --tier 2)
+  --policy <path>, -c   Explicit path to fabrial.yaml policy file
   --lease-secret <keys> Comma-separated secrets to lease dynamically via Locksmith
   --session-ticket <tk> Session ticket for autonomous agent batch loops
   --airgap              Total offline network isolation
-  --net                 Permit direct outbound networking`)
+  --net                 Permit direct outbound networking
+  --dry-run             Preview the routing decision and command without executing
+  -q, --quiet           Suppress Fabrial routing banner output`)
 }
 
 func printVersion() {
@@ -89,26 +105,32 @@ func printVersion() {
 }
 
 func handleExec(args []string) {
-	// Re-delegate execution arguments directly through Airlock CLI engine
-	// Ensuring standard environment scrubbing, Locksmith ETX leasing, and Argus telemetry
-	airlockBin, err := os.Executable()
+	opts, cmdArgs, err := router.ParseArgs(args)
 	if err != nil {
-		airlockBin = "airlock"
-	}
-
-	execArgs := append([]string{"run"}, args...)
-	cmd := exec.Command(airlockBin, execArgs...)
-	cmd.Stdin = os.Stdin
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-
-	if err := cmd.Run(); err != nil {
-		if exitErr, ok := err.(*exec.ExitError); ok {
-			os.Exit(exitErr.ExitCode())
-		}
-		fmt.Fprintf(os.Stderr, "fabrial: execution error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "fabrial: invalid arguments: %v\n", err)
 		os.Exit(1)
 	}
+
+	if len(cmdArgs) == 0 {
+		fmt.Fprintln(os.Stderr, "fabrial: no command specified for execution")
+		fmt.Fprintln(os.Stderr, "Usage: fabrial run [flags] [--] <command> [args...]")
+		os.Exit(1)
+	}
+
+	ctx := context.Background()
+	decision, err := router.Route(opts, cmdArgs)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fabrial: routing error: %v\n", err)
+		os.Exit(1)
+	}
+
+	exitCode, err := router.Execute(ctx, decision)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "fabrial: execution error: %v\n", err)
+		os.Exit(exitCode)
+	}
+
+	os.Exit(exitCode)
 }
 
 type PillarHealth struct {
@@ -164,13 +186,35 @@ func handleDoctor(args []string) {
 		Details: lsDetails,
 	})
 
-	// 3. Check Aegisbox Hypervisor
-	aegisStatus := "OFFLINE"
-	aegisDetails := "Hypervisor binary not detected"
-	if aegisBin, err := bridge.DiscoverAegisbox(); err == nil {
-		aegisStatus = "READY"
-		aegisDetails = fmt.Sprintf("Available at %s", aegisBin)
+	// 3. Check Aegisbox Hypervisor & Resident Daemon Socket
+	aegisSock := resolveAegisboxSocketPath()
+	aegisBin, binErr := bridge.DiscoverAegisbox()
+	if binErr != nil {
+		aegisBin, binErr = router.FindExecutable("aegisbox")
 	}
+
+	aegisStatus := "OFFLINE"
+	aegisDetails := fmt.Sprintf("Daemon socket not found at %s and hypervisor binary not detected", aegisSock)
+
+	// Check if Aegisbox daemon socket is active
+	socketOnline := false
+	if conn, err := net.DialTimeout("unix", aegisSock, 500*time.Millisecond); err == nil {
+		_ = conn.Close()
+		socketOnline = true
+	}
+
+	if socketOnline {
+		aegisStatus = "ONLINE"
+		if binErr == nil {
+			aegisDetails = fmt.Sprintf("Daemon active on %s (hypervisor at %s)", aegisSock, aegisBin)
+		} else {
+			aegisDetails = fmt.Sprintf("Daemon active on %s", aegisSock)
+		}
+	} else if binErr == nil {
+		aegisStatus = "READY"
+		aegisDetails = fmt.Sprintf("Available at %s (daemon socket %s offline)", aegisBin, aegisSock)
+	}
+
 	results = append(results, PillarHealth{
 		Pillar:  "Aegisbox",
 		Role:    "Tier 2 MicroVM Isolation Engine",
@@ -235,26 +279,6 @@ func handleDaemon(args []string) {
 	}
 }
 
-func findExecutable(name string) (string, error) {
-	if p, err := exec.LookPath(name); err == nil {
-		return p, nil
-	}
-	home, _ := os.UserHomeDir()
-	candidates := []string{
-		filepath.Join("/opt/homebrew/bin", name),
-		filepath.Join("/usr/local/bin", name),
-		filepath.Join(home, ".local", "bin", name),
-		filepath.Join(home, "bin", name),
-		filepath.Join(home, "go", "bin", name),
-	}
-	for _, c := range candidates {
-		if fi, err := os.Stat(c); err == nil && !fi.IsDir() && (fi.Mode()&0111 != 0) {
-			return c, nil
-		}
-	}
-	return "", fmt.Errorf("%s binary not found on PATH or standard install directories", name)
-}
-
 func startDaemons() {
 	fmt.Println("💎 Starting Fabrial Sovereign Security Fabric Resident Daemons...")
 	fmt.Println(strings.Repeat("─", 65))
@@ -265,7 +289,7 @@ func startDaemons() {
 		_ = conn.Close()
 		fmt.Printf("✔ Locksmith ephemeral lease daemon is already active (%s)\n", lsSock)
 	} else {
-		lsBin, err := findExecutable("locksmith")
+		lsBin, err := router.FindExecutable("locksmith")
 		if err != nil {
 			fmt.Printf("⚠️  Locksmith: %v (install via 'brew install bonjoski/tap/locksmith')\n", err)
 		} else {
@@ -308,7 +332,7 @@ func startDaemons() {
 		_ = conn.Close()
 		fmt.Printf("✔ Argus telemetry & killswitch bus is already active (%s)\n", argusSock)
 	} else {
-		argusBin, err := findExecutable("argus")
+		argusBin, err := router.FindExecutable("argus")
 		if err != nil {
 			fmt.Printf("⚠️  Argus: %v (install via 'brew install bonjoski/tap/argus')\n", err)
 		} else {
@@ -335,6 +359,39 @@ func startDaemons() {
 		}
 	}
 
+	// 3. Aegisbox Daemon
+	aegisSock := resolveAegisboxSocketPath()
+	if conn, err := net.DialTimeout("unix", aegisSock, 300*time.Millisecond); err == nil {
+		_ = conn.Close()
+		fmt.Printf("✔ Aegisbox daemon is already active (%s)\n", aegisSock)
+	} else {
+		aegisBin, err := router.FindExecutable("aegisbox")
+		if err != nil {
+			fmt.Printf("⚠️  Aegisbox: %v (install via 'brew install bonjoski/tap/aegisbox')\n", err)
+		} else {
+			cmd := exec.Command(aegisBin, "daemon", "start")
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				fmt.Printf("⚠️  Aegisbox daemon start: %v (%s)\n", err, strings.TrimSpace(string(out)))
+			} else {
+				ready := false
+				for i := 0; i < 20; i++ {
+					time.Sleep(100 * time.Millisecond)
+					if c, err := net.DialTimeout("unix", aegisSock, 100*time.Millisecond); err == nil {
+						_ = c.Close()
+						ready = true
+						break
+					}
+				}
+				if ready {
+					fmt.Printf("✔ Aegisbox microvm daemon started (%s)\n", aegisSock)
+				} else {
+					fmt.Println("✔ Aegisbox daemon start command issued")
+				}
+			}
+		}
+	}
+
 	fmt.Println(strings.Repeat("─", 65))
 	fmt.Println("💎 Run 'fabrial doctor' to verify multi-pillar health.")
 }
@@ -344,7 +401,7 @@ func stopDaemons() {
 	fmt.Println(strings.Repeat("─", 65))
 
 	// 1. Stop Argus Daemon
-	if argusBin, err := findExecutable("argus"); err == nil {
+	if argusBin, err := router.FindExecutable("argus"); err == nil {
 		cmd := exec.Command(argusBin, "daemon", "stop")
 		_ = cmd.Run()
 		fmt.Println("✔ Argus telemetry & killswitch daemon stopped")
@@ -386,6 +443,18 @@ func stopDaemons() {
 		fmt.Println("✔ Locksmith daemon was not running")
 	}
 
+	// 3. Stop Aegisbox Daemon
+	if aegisBin, err := router.FindExecutable("aegisbox"); err == nil {
+		cmd := exec.Command(aegisBin, "daemon", "stop")
+		_ = cmd.Run()
+		fmt.Println("✔ Aegisbox daemon stopped")
+	} else {
+		cmd := exec.Command("pkill", "-f", "aegisboxd")
+		_ = cmd.Run()
+	}
+	aegisSock := resolveAegisboxSocketPath()
+	_ = os.Remove(aegisSock)
+
 	fmt.Println(strings.Repeat("─", 65))
 	fmt.Println("💎 All resident fabric daemons stopped.")
 }
@@ -406,6 +475,17 @@ func resolveArgusSocketPath() string {
 		return tmpCandidate
 	}
 	return fmt.Sprintf("%s/argus.sock", os.TempDir())
+}
+
+func resolveAegisboxSocketPath() string {
+	if s := os.Getenv("AEGISBOX_SOCKET"); s != "" {
+		return s
+	}
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" {
+		return filepath.Join(home, ".aegisbox", "aegisboxd.sock")
+	}
+	return filepath.Join(os.TempDir(), "aegisboxd.sock")
 }
 
 func terminateProcess(pid int) error {

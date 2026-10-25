@@ -1,0 +1,116 @@
+# 💎 Fabrial — Sovereign AI Agent Security Policy
+# Standardized repository-level isolation and routing configuration.
+version: "1"
+name: "fabrial-security-fabric"
+
+# Default fallback isolation tier when a tool does not match explicit rules:
+# 1: Airlock Kernel Confinement (<15ms cold start)
+# 2: Aegisbox MicroVM Isolation (~100ms hardware boundary)
+default_tier: 1
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tier 1: Airlock Kernel Sandbox (<15ms cold start)
+# Fast, low-overhead native OS boundary (Seatbelt on macOS / Landlock on Linux).
+# Best for benign linters, code formatters, static analyzers, and read-only inspection.
+# ─────────────────────────────────────────────────────────────────────────────
+tier1:
+  description: "Benign linting, formatting, type checking, and read-only workspace inspection"
+  tools:
+    # Linters & Formatters
+    - eslint
+    - prettier
+    - gofmt
+    - golangci-lint
+    - go vet
+    - black
+    - ruff
+    - flake8
+    - isort
+    - tsc
+    - rubocop
+    - shellcheck
+    - markdownlint
+    - yamllint
+    - stylua
+    - biome
+    - clippy
+    - rustfmt
+    # Read-Only Inspection & Version Control
+    - git diff
+    - git status
+    - git log
+    - git show
+    - git branch
+    - ls
+    - cat
+    - head
+    - tail
+    - grep
+    - rg
+    - find
+    - echo
+    - which
+  patterns:
+    - "*lint*"
+    - "*format*"
+    - "*prettier*"
+    - "*check*"
+    - "git diff*"
+    - "git status*"
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Tier 2: Aegisbox MicroVM Isolation (~100ms cold start)
+# Hardware-virtualized microVM guest (Apple Virtualization / KVM) with CoW disk.
+# Best for package managers, compilers, untrusted scripts, network egress, and shell dispatch.
+# ─────────────────────────────────────────────────────────────────────────────
+tier2:
+  description: "Sensitive tools, package managers, network egress, and arbitrary scripts"
+  tools:
+    # Package Managers & Build Tools
+    - npm
+    - yarn
+    - pnpm
+    - pip
+    - pip3
+    - poetry
+    - cargo
+    - gem
+    - bundle
+    - composer
+    - maven
+    - gradle
+    - go get
+    - go install
+    # Interpreters & Shells
+    - python
+    - python3
+    - node
+    - ruby
+    - perl
+    - bash
+    - sh
+    - zsh
+    - fish
+    # Network Egress & Remote Transfer
+    - curl
+    - wget
+    - nc
+    - netcat
+    - ssh
+    - scp
+    - rsync
+    # Container & Infrastructure
+    - docker
+    - podman
+    - kubectl
+    - terraform
+  patterns:
+    - "*install*"
+    - "*build*"
+    - "*.sh"
+    - "*.py"
+    - "*.js"
+    - "curl *"
+    - "wget *"
+    - "bash *"
+    - "sh *"

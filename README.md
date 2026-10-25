@@ -33,7 +33,7 @@ cd fabrial && make install
 ```
 
 ### 2. Verify Your Security Fabric
-Ensure all local security engines are operating and kernel hooks are available:
+Ensure all local security engines are operating and kernel hooks/sockets are available:
 ```bash
 fabrial doctor
 ```
@@ -41,19 +41,27 @@ fabrial doctor
 💎 Fabrial Multi-Pillar Diagnostic Suite
 ─────────────────────────────────────────────────────────────────
 ✅ Airlock      [READY   ] Tier 1 Kernel Sandbox Engine
+   Details: Native kernel boundary active
 ✅ Locksmith    [ONLINE  ] Ephemeral Secret Lease Daemon
-✅ Aegisbox     [READY   ] Tier 2 MicroVM Isolation Engine
+   Details: Active on /Users/user/.locksmith/locksmith.sock
+✅ Aegisbox     [ONLINE  ] Tier 2 MicroVM Isolation Engine
+   Details: Daemon active on /Users/user/.aegisbox/aegisboxd.sock
 ✅ Argus        [ONLINE  ] SIEM Telemetry & Killswitch Bus
+   Details: Listening on /Users/user/.argus/argus.sock
 ─────────────────────────────────────────────────────────────────
 ```
 
-### 3. Run Sandboxed Agent Commands
-Wrap any command under the hardened `agent` profile:
+### 3. Run Sandboxed Agent Commands with Dynamic Multi-Tier Routing
+Fabrial automatically maps commands to the optimal isolation tier using `fabrial.yaml`:
 ```bash
-# Fast Tier 1 Kernel Sandbox (<15ms overhead)
-fabrial exec --profile agent -- npm test
+# Dynamic routing: Benign linter routed to Tier 1 Airlock (<15ms cold start)
+fabrial run eslint src/
 
-# Deep Tier 2 MicroVM Sandbox (~100ms overhead, copy-on-write guest)
+# Dynamic routing: Sensitive package manager routed to Tier 2 Aegisbox MicroVM (~100ms hardware isolation)
+fabrial run npm install lodash
+
+# Explicit CLI overrides:
+fabrial exec --profile agent -- npm test
 fabrial exec --profile agent --microvm -- python3 untrusted_script.py
 ```
 
@@ -186,29 +194,86 @@ Inside the sandbox, `GITHUB_TOKEN` is injected strictly into the target process 
 
 ---
 
+## 📖 Standardized `fabrial.yaml` Policy Schema
+
+Place a `fabrial.yaml` in your repository root to configure multi-tier routing rules. Fabrial automatically maps sensitive tools to Aegisbox Tier 2 and benign linting/formatting to Airlock Tier 1:
+
+```yaml
+version: "1"
+name: "my-agent-sandbox-policy"
+default_tier: 1
+
+# Tier 1: Fast Kernel Confinement via Airlock (<15ms cold start)
+tier1:
+  description: "Benign linters, formatters, and inspection"
+  tools:
+    - eslint
+    - prettier
+    - gofmt
+    - golangci-lint
+    - black
+    - ruff
+    - git diff
+    - git status
+  patterns:
+    - "*lint*"
+    - "*format*"
+
+# Tier 2: Deep Hardware Isolation via Aegisbox MicroVM (~100ms cold start)
+tier2:
+  description: "Sensitive tools, package managers, and arbitrary scripts"
+  tools:
+    - npm
+    - pip
+    - cargo
+    - python
+    - node
+    - bash
+    - curl
+    - wget
+  patterns:
+    - "*install*"
+    - "*.sh"
+    - "*.py"
+```
+
+---
+
 ## 📖 CLI Reference
 
-### `fabrial exec`
-Executes a command inside the sovereign security runtime.
+### `fabrial run` / `fabrial exec`
+Executes a command inside the sovereign security runtime with dynamic multi-tier routing:
 
 ```text
 Usage:
-  fabrial exec [flags] -- <command> [args...]
+  fabrial run [flags] [--] <command> [args...]
+  fabrial exec [flags] [--] <command> [args...]
 
 Flags:
   --profile <name>         Security profile: agent (default), strict, airgap
-  --microvm                Escalate to Tier 2 Aegisbox Hypervisor MicroVM
+  --tier <1|2>             Explicit execution tier override (1: Airlock, 2: Aegisbox)
+  --microvm                Escalate to Tier 2 Aegisbox Hypervisor MicroVM (alias for --tier 2)
+  --policy <path>, -c      Explicit path to fabrial.yaml policy file
   --lease-secret <keys>    Comma-separated list of secrets to lease via Locksmith
   --session-ticket <tk>    Autonomous agent session ticket for batch loops
   --airgap                 Block 100% of network traffic (offline mode)
   --net                    Allow unconstrained outbound network access
+  --dry-run                Preview routing decision and command without executing
+  -q, --quiet              Suppress routing decision banner
 ```
 
 ### `fabrial doctor`
-Inspects system prerequisites, kernel sandbox support, and resident daemons.
+Inspects system prerequisites, kernel sandbox support, resident daemons, and daemon sockets (including `~/.aegisbox/aegisboxd.sock`):
 
 ```bash
 fabrial doctor [--json]
+```
+
+### `fabrial daemon`
+Manages resident fabric daemons (Locksmith, Argus, Aegisbox):
+
+```bash
+fabrial daemon [status|start|stop|restart]
 ```
 
 ### `fabrial version`
