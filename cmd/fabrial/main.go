@@ -187,7 +187,7 @@ func handleDoctor(args []string) {
 	})
 
 	// 3. Check Aegisbox Hypervisor & Resident Daemon Socket
-	aegisSock := resolveAegisboxSocketPath()
+	aegisSock := router.ResolveAegisboxSocketPath()
 	aegisBin, binErr := bridge.DiscoverAegisbox()
 	if binErr != nil {
 		aegisBin, binErr = router.FindExecutable("aegisbox")
@@ -211,8 +211,8 @@ func handleDoctor(args []string) {
 			aegisDetails = fmt.Sprintf("Daemon active on %s", aegisSock)
 		}
 	} else if binErr == nil {
-		aegisStatus = "READY"
-		aegisDetails = fmt.Sprintf("Available at %s (daemon socket %s offline)", aegisBin, aegisSock)
+		aegisStatus = "DEGRADED"
+		aegisDetails = fmt.Sprintf("Available at %s (daemon socket %s offline; run 'fabrial daemon start')", aegisBin, aegisSock)
 	}
 
 	results = append(results, PillarHealth{
@@ -360,7 +360,7 @@ func startDaemons() {
 	}
 
 	// 3. Aegisbox Daemon
-	aegisSock := resolveAegisboxSocketPath()
+	aegisSock := router.ResolveAegisboxSocketPath()
 	if conn, err := net.DialTimeout("unix", aegisSock, 300*time.Millisecond); err == nil {
 		_ = conn.Close()
 		fmt.Printf("✔ Aegisbox daemon is already active (%s)\n", aegisSock)
@@ -452,7 +452,7 @@ func stopDaemons() {
 		cmd := exec.Command("pkill", "-f", "aegisboxd")
 		_ = cmd.Run()
 	}
-	aegisSock := resolveAegisboxSocketPath()
+	aegisSock := router.ResolveAegisboxSocketPath()
 	_ = os.Remove(aegisSock)
 
 	fmt.Println(strings.Repeat("─", 65))
@@ -475,17 +475,6 @@ func resolveArgusSocketPath() string {
 		return tmpCandidate
 	}
 	return fmt.Sprintf("%s/argus.sock", os.TempDir())
-}
-
-func resolveAegisboxSocketPath() string {
-	if s := os.Getenv("AEGISBOX_SOCKET"); s != "" {
-		return s
-	}
-	home, err := os.UserHomeDir()
-	if err == nil && home != "" {
-		return filepath.Join(home, ".aegisbox", "aegisboxd.sock")
-	}
-	return filepath.Join(os.TempDir(), "aegisboxd.sock")
 }
 
 func terminateProcess(pid int) error {

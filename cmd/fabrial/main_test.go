@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/bonjoski/fabrial/pkg/router"
 )
 
 func captureOutput(f func()) string {
@@ -99,7 +101,7 @@ func TestFabrial_ResolveAegisboxSocket(t *testing.T) {
 	}()
 
 	_ = os.Unsetenv("AEGISBOX_SOCKET")
-	sock := resolveAegisboxSocketPath()
+	sock := router.ResolveAegisboxSocketPath()
 	expectedSuffix := filepath.Join(".aegisbox", "aegisboxd.sock")
 	if !strings.HasSuffix(sock, expectedSuffix) {
 		t.Fatalf("expected socket to end with %s, got: %s", expectedSuffix, sock)
@@ -107,8 +109,8 @@ func TestFabrial_ResolveAegisboxSocket(t *testing.T) {
 
 	// With env override
 	_ = os.Setenv("AEGISBOX_SOCKET", "/tmp/custom-aegisbox.sock")
-	if resolveAegisboxSocketPath() != "/tmp/custom-aegisbox.sock" {
-		t.Fatalf("expected env override socket path, got: %s", resolveAegisboxSocketPath())
+	if router.ResolveAegisboxSocketPath() != "/tmp/custom-aegisbox.sock" {
+		t.Fatalf("expected env override socket path, got: %s", router.ResolveAegisboxSocketPath())
 	}
 }
 
@@ -154,6 +156,48 @@ func TestFabrial_Doctor_AegisboxSocketOnline(t *testing.T) {
 			}
 			if !strings.Contains(p.Details, sockPath) {
 				t.Fatalf("expected doctor output to reference socket path %s, got: %s", sockPath, p.Details)
+			}
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected Aegisbox in doctor JSON: %s", out)
+	}
+}
+
+func TestFabrial_Doctor_AegisboxSocketOffline(t *testing.T) {
+	origEnv := os.Getenv("AEGISBOX_SOCKET")
+	defer func() {
+		if origEnv != "" {
+			_ = os.Setenv("AEGISBOX_SOCKET", origEnv)
+		} else {
+			_ = os.Unsetenv("AEGISBOX_SOCKET")
+		}
+	}()
+
+	// Point to a guaranteed non-existent socket
+	nonExistentSock := filepath.Join(os.TempDir(), "nonexistent_aegisbox.sock")
+	_ = os.Remove(nonExistentSock)
+	_ = os.Setenv("AEGISBOX_SOCKET", nonExistentSock)
+
+	out := captureOutput(func() {
+		handleDoctor([]string{"--json"})
+	})
+
+	var report []PillarHealth
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("failed to unmarshal doctor output: %v (raw: %s)", err, out)
+	}
+
+	found := false
+	for _, p := range report {
+		if p.Pillar == "Aegisbox" {
+			found = true
+			if p.Status != "DEGRADED" && p.Status != "OFFLINE" {
+				t.Fatalf("expected Aegisbox to report DEGRADED or OFFLINE status when daemon socket is offline, got: %s", p.Status)
+			}
+			if !strings.Contains(p.Details, "offline") {
+				t.Fatalf("expected doctor details to mention socket is offline, got: %s", p.Details)
 			}
 			break
 		}

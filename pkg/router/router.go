@@ -7,10 +7,12 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/bonjoski/airlock/pkg/bridge"
 	"github.com/bonjoski/fabrial/pkg/policy"
@@ -188,22 +190,37 @@ func Route(opts *ExecutionOptions, cmdArgs []string) (*Decision, error) {
 		return nil, errors.New("no command specified for execution")
 	}
 
+	// 1. Explicit airgap safety check:
+	// If explicit Tier 2 was requested alongside --airgap, fail closed immediately
+	// because Tier 2 (microVM) does not support verified network airgap.
+	if opts.TierOverride == policy.Tier2 && opts.Airgap {
+		return nil, errors.New("Tier 2 (Aegisbox MicroVM) does not support verified network airgap; execution halted to prevent isolation inversion (use Tier 1 for kernel-enforced airgap)")
+	}
+
 	var selectedTier policy.Tier
 	var matchReason string
 	var policyFile string
 
-	// 1. Explicit CLI override takes highest precedence
+	// 2. Explicit CLI override takes highest precedence
 	if opts.TierOverride != policy.TierUnknown {
 		selectedTier = opts.TierOverride
 		matchReason = fmt.Sprintf("explicit CLI tier override (%s)", selectedTier.String())
 	} else {
-		// 2. Discover and evaluate repository-level fabrial.yaml policy
+		// 3. Discover and evaluate repository-level fabrial.yaml policy
 		pol, fPath, err := policy.LoadPolicy(opts.PolicyPath, opts.Dir)
 		if err != nil {
 			return nil, fmt.Errorf("failed to load fabrial policy: %w", err)
 		}
 		policyFile = fPath
 		selectedTier, matchReason = pol.Match(cmdArgs)
+
+		// Airgap confinement guarantee:
+		// If --airgap was requested and policy matched Tier 2, route to Tier 1 where Airlock's
+		// kernel sandbox enforces 100% offline network airgap, preventing isolation inversion.
+		if opts.Airgap && selectedTier == policy.Tier2 {
+			selectedTier = policy.Tier1
+			matchReason = "airgap requested: routed to Tier 1 kernel sandbox to guarantee offline isolation (preventing Tier 2 network egress)"
+		}
 	}
 
 	// 3. Resolve target engine binary and build invocation arguments
@@ -281,6 +298,12 @@ func Route(opts *ExecutionOptions, cmdArgs []string) (*Decision, error) {
 
 // Execute runs the command according to the routing Decision.
 func Execute(ctx context.Context, dec *Decision) (int, error) {
+	if dec.Tier == policy.Tier2 {
+		if err := VerifyTier2Health(); err != nil {
+			return 1, fmt.Errorf("fabrial: %w", err)
+		}
+	}
+
 	if dec.Options != nil && !dec.Options.Quiet {
 		banner := "💎 Fabrial Multi-Tier Router"
 		switch dec.Tier {
@@ -341,4 +364,47 @@ func FindExecutable(name string) (string, error) {
 	}
 
 	return "", fmt.Errorf("%s binary not found on PATH or standard install directories", name)
+}
+
+// ResolveAegisboxSocketPath returns the path to the Aegisbox daemon Unix domain socket.
+func ResolveAegisboxSocketPath() string {
+	if s := os.Getenv("AEGISBOX_SOCKET"); s != "" {
+		return s
+	}
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" {
+		return filepath.Join(home, ".aegisbox", "aegisboxd.sock")
+	}
+	return filepath.Join(os.TempDir(), "aegisboxd.sock")
+}
+
+// CheckAegisboxDaemon checks whether the Aegisbox resident daemon socket is online and connectable.
+func CheckAegisboxDaemon() (bool, string) {
+	sockPath := ResolveAegisboxSocketPath()
+	conn, err := net.DialTimeout("unix", sockPath, 500*time.Millisecond)
+	if err != nil {
+		return false, sockPath
+	}
+	_ = conn.Close()
+	return true, sockPath
+}
+
+// VerifyTier2Health checks that the Tier 2 microVM engine is available and active.
+// Fails closed if the daemon socket is offline or the binary is not found to prevent isolation inversion.
+func VerifyTier2Health() error {
+	bin, err := bridge.DiscoverAegisbox()
+	if err != nil {
+		bin, err = FindExecutable("aegisbox")
+	}
+	if err != nil {
+		return fmt.Errorf("Tier 2 hypervisor engine unavailable: aegisbox executable not found (%w)", err)
+	}
+
+	online, sockPath := CheckAegisboxDaemon()
+	if !online {
+		return fmt.Errorf("Tier 2 microVM isolation unavailable: daemon socket %s is offline (fail-closed to prevent isolation inversion; run 'fabrial daemon start' or use Tier 1)", sockPath)
+	}
+
+	_ = bin
+	return nil
 }
