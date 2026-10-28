@@ -267,6 +267,7 @@ func TestExecute_Tier2_SucceedsWhenDaemonOnline(t *testing.T) {
 		t.Fatalf("failed to listen on test socket: %v", err)
 	}
 	defer ln.Close()
+	_ = os.Chmod(sockPath, 0600)
 
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer

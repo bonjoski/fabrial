@@ -137,6 +137,7 @@ func TestFabrial_Doctor_AegisboxSocketOnline(t *testing.T) {
 		t.Fatalf("failed to listen on test socket %s: %v", sockPath, err)
 	}
 	defer ln.Close()
+	_ = os.Chmod(sockPath, 0600)
 
 	out := captureOutput(func() {
 		handleDoctor([]string{"--json"})

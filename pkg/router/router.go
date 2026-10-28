@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/bonjoski/airlock/pkg/bridge"
@@ -181,12 +182,58 @@ func ParseArgs(args []string) (*ExecutionOptions, []string, error) {
 		}
 	}
 
+	if opts.Airgap && opts.Net {
+		return nil, nil, errors.New("conflicting execution flags: --airgap and --net are mutually exclusive")
+	}
+
+	if opts.LeaseSecrets != "" {
+		if err := validateLeaseSecrets(opts.LeaseSecrets); err != nil {
+			return nil, nil, err
+		}
+	}
+
 	return opts, cmdArgs, nil
+}
+
+var dangerousEnvVars = map[string]bool{
+	"LD_PRELOAD":            true,
+	"LD_LIBRARY_PATH":       true,
+	"DYLD_INSERT_LIBRARIES": true,
+	"DYLD_LIBRARY_PATH":     true,
+	"DYLD_FRAMEWORK_PATH":   true,
+	"PATH":                  true,
+	"SHELL":                 true,
+	"IFS":                   true,
+	"BASH_ENV":              true,
+	"ENV":                   true,
+	"PYTHONPATH":            true,
+	"NODE_OPTIONS":          true,
+	"PERL5LIB":              true,
+	"RUBYOPT":               true,
+}
+
+func validateLeaseSecrets(secrets string) error {
+	keys := strings.Split(secrets, ",")
+	for _, k := range keys {
+		k = strings.TrimSpace(k)
+		if k == "" {
+			continue
+		}
+		if dangerousEnvVars[strings.ToUpper(k)] {
+			return fmt.Errorf("insecure leased secret %q: reserved system environment variables cannot be leased", k)
+		}
+		for _, r := range k {
+			if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_') {
+				return fmt.Errorf("invalid leased secret identifier %q: must contain only alphanumeric characters and underscores", k)
+			}
+		}
+	}
+	return nil
 }
 
 // Route analyzes execution options, commands, and repository policy to produce a routing Decision.
 func Route(opts *ExecutionOptions, cmdArgs []string) (*Decision, error) {
-	if len(cmdArgs) == 0 {
+	if len(cmdArgs) == 0 || strings.TrimSpace(cmdArgs[0]) == "" {
 		return nil, errors.New("no command specified for execution")
 	}
 
@@ -379,8 +426,32 @@ func ResolveAegisboxSocketPath() string {
 }
 
 // CheckAegisboxDaemon checks whether the Aegisbox resident daemon socket is online and connectable.
+// Invariant #2: Fail-closed if socket permissions are insecure (non-0600), symlinked, or owned by another user.
 func CheckAegisboxDaemon() (bool, string) {
 	sockPath := ResolveAegisboxSocketPath()
+
+	fi, err := os.Lstat(sockPath)
+	if err != nil {
+		return false, sockPath
+	}
+
+	// Must be a socket and NOT a symlink
+	if fi.Mode()&os.ModeSymlink != 0 || fi.Mode()&os.ModeSocket == 0 {
+		return false, sockPath
+	}
+
+	// Invariant: Fail-closed if socket permission is insecure (must not permit group/other access)
+	if fi.Mode().Perm()&0077 != 0 {
+		return false, sockPath
+	}
+
+	// Verify UID ownership on unix
+	if stat, ok := fi.Sys().(*syscall.Stat_t); ok {
+		if stat.Uid != uint32(os.Getuid()) {
+			return false, sockPath
+		}
+	}
+
 	conn, err := net.DialTimeout("unix", sockPath, 500*time.Millisecond)
 	if err != nil {
 		return false, sockPath
