@@ -4,6 +4,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -13,6 +14,10 @@ import (
 // TestAdversarial_SocketSecurityAttestation verifies Invariant #2:
 // Socket attestation must fail closed on insecure permissions, symlinks, and non-socket files.
 func TestAdversarial_SocketSecurityAttestation(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping unix domain socket permission attestation on windows")
+	}
+
 	origEnv := os.Getenv("AEGISBOX_SOCKET")
 	defer func() {
 		if origEnv != "" {

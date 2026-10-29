@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -202,7 +203,25 @@ func TestRoute_Airgap_DowngradesPolicyTier2ToTier1(t *testing.T) {
 	}
 }
 
+func setupMockAegisbox(t *testing.T) {
+	t.Helper()
+	tmpBinDir := t.TempDir()
+	mockBin := filepath.Join(tmpBinDir, "aegisbox")
+	if runtime.GOOS == "windows" {
+		mockBin += ".bat"
+		_ = os.WriteFile(mockBin, []byte("@echo off\r\n"), 0755)
+	} else {
+		_ = os.WriteFile(mockBin, []byte("#!/bin/sh\nexit 0\n"), 0755)
+	}
+	origPath := os.Getenv("PATH")
+	_ = os.Setenv("PATH", tmpBinDir+string(os.PathListSeparator)+origPath)
+	t.Cleanup(func() {
+		_ = os.Setenv("PATH", origPath)
+	})
+}
+
 func TestExecute_Tier2_FailsClosedWhenDaemonOffline(t *testing.T) {
+	setupMockAegisbox(t)
 	origEnv := os.Getenv("AEGISBOX_SOCKET")
 	defer func() {
 		if origEnv != "" {
@@ -247,6 +266,7 @@ func TestExecute_Tier2_FailsClosedWhenDaemonOffline(t *testing.T) {
 }
 
 func TestExecute_Tier2_SucceedsWhenDaemonOnline(t *testing.T) {
+	setupMockAegisbox(t)
 	sockPath := filepath.Join(os.TempDir(), "agb_online_test.sock")
 	_ = os.Remove(sockPath)
 
