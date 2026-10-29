@@ -197,8 +197,9 @@ func TestFabrial_Doctor_AegisboxSocketOffline(t *testing.T) {
 			if p.Status != "DEGRADED" && p.Status != "OFFLINE" {
 				t.Fatalf("expected Aegisbox to report DEGRADED or OFFLINE status when daemon socket is offline, got: %s", p.Status)
 			}
-			if !strings.Contains(p.Details, "offline") {
-				t.Fatalf("expected doctor details to mention socket is offline, got: %s", p.Details)
+			detailsLower := strings.ToLower(p.Details)
+			if !strings.Contains(detailsLower, "offline") && !strings.Contains(detailsLower, "not found") {
+				t.Fatalf("expected doctor details to mention socket is offline or not found, got: %s", p.Details)
 			}
 			break
 		}

@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/bonjoski/airlock/pkg/bridge"
@@ -435,21 +434,8 @@ func CheckAegisboxDaemon() (bool, string) {
 		return false, sockPath
 	}
 
-	// Must be a socket and NOT a symlink
-	if fi.Mode()&os.ModeSymlink != 0 || fi.Mode()&os.ModeSocket == 0 {
+	if !verifySocketSecurity(fi) {
 		return false, sockPath
-	}
-
-	// Invariant: Fail-closed if socket permission is insecure (must not permit group/other access)
-	if fi.Mode().Perm()&0077 != 0 {
-		return false, sockPath
-	}
-
-	// Verify UID ownership on unix
-	if stat, ok := fi.Sys().(*syscall.Stat_t); ok {
-		if stat.Uid != uint32(os.Getuid()) {
-			return false, sockPath
-		}
 	}
 
 	conn, err := net.DialTimeout("unix", sockPath, 500*time.Millisecond)
