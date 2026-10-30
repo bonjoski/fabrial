@@ -17,6 +17,7 @@ import (
 	"github.com/bonjoski/airlock/pkg/bridge"
 	"github.com/bonjoski/airlock/pkg/doctor"
 	"github.com/bonjoski/airlock/pkg/secrets"
+	"github.com/bonjoski/fabrial/pkg/circuitbreaker"
 	"github.com/bonjoski/fabrial/pkg/router"
 	"github.com/bonjoski/fabrial/pkg/version"
 )
@@ -47,6 +48,9 @@ func main() {
 
 	case "daemon":
 		handleDaemon(args)
+
+	case "circuit-breaker", "breaker":
+		handleCircuitBreaker(args)
 
 	default:
 		// Direct shorthand: if first arg is a flag or executable, run it
@@ -483,4 +487,54 @@ func terminateProcess(pid int) error {
 		return err
 	}
 	return proc.Kill()
+}
+
+func handleCircuitBreaker(args []string) {
+	sockPath := resolveArgusSocketPath()
+	for i := 0; i < len(args); i++ {
+		if (args[i] == "--socket" || args[i] == "-socket") && i+1 < len(args) {
+			sockPath = args[i+1]
+			i++
+		}
+	}
+
+	subcmd := "listen"
+	if len(args) > 0 && !strings.HasPrefix(args[0], "-") {
+		subcmd = args[0]
+	}
+
+	switch subcmd {
+	case "listen", "start", "run":
+		fmt.Printf("💎 Starting Fabrial Circuit Breaker tripwire on %s...\n", sockPath)
+		tw := circuitbreaker.NewTripwire(circuitbreaker.TripwireOptions{
+			SocketPath: sockPath,
+			OnTrip: func(res *circuitbreaker.TripResult) {
+				fmt.Printf("⚡ [CIRCUIT BREAKER TRIPPED] PID %d FROZEN in %v (method: %s, rule: %s)\n",
+					res.TargetPID, res.FreezeLatency, res.FreezeMethod, res.Alert.RuleName)
+			},
+		})
+
+		ctx := context.Background()
+		if err := tw.Start(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "circuit-breaker: failed to start: %v\n", err)
+			os.Exit(1)
+		}
+		defer tw.Stop()
+
+		fmt.Println("✔ Circuit breaker tripwire active. Monitoring for Quarry telemetry kill signals...")
+		select {}
+
+	case "status":
+		fmt.Println("💎 Fabrial Circuit Breaker Status:")
+		fmt.Printf("   Socket: %s\n", sockPath)
+		if conn, err := net.DialTimeout("unix", sockPath, 200*time.Millisecond); err == nil {
+			_ = conn.Close()
+			fmt.Println("   State:  ● Active")
+		} else {
+			fmt.Println("   State:  ○ Inactive")
+		}
+
+	default:
+		fmt.Println("Usage: fabrial circuit-breaker [listen|status] [--socket <path>]")
+	}
 }
