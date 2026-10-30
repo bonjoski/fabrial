@@ -8,7 +8,7 @@ func TestVersion_Format(t *testing.T) {
 	if Version == "" {
 		t.Fatalf("expected non-empty Version")
 	}
-	if Version != "0.2.0" {
+	if Version != "0.5.0" {
 		t.Logf("built version: %s", Version)
 	}
 }
