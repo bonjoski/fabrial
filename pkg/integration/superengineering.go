@@ -181,7 +181,7 @@ func SuperEngineering(targetDir string) (*Result, error) {
 		shieldRun := map[string]interface{}{
 			"name": "shield",
 			"commands": []interface{}{
-				"shield proxy --port 8080",
+				"shield proxy --addr 127.0.0.1:8443 --tls",
 			},
 			"default": false,
 		}
@@ -305,7 +305,7 @@ func SuperEngineeringGlobal() (*Result, error) {
 		result.SetupAdded = append(result.SetupAdded, "fabrial doctor (user fallback)")
 	}
 
-	runCmd := exec.Command(scPath, "project", "scripts", "set", "run", "shield", "shield proxy --port 8080", "--scope", "user")
+	runCmd := exec.Command(scPath, "project", "scripts", "set", "run", "shield", "shield proxy --addr 127.0.0.1:8443 --tls", "--scope", "user")
 	if err := runCmd.Run(); err == nil {
 		result.RunAdded = append(result.RunAdded, "shield (user fallback)")
 	}

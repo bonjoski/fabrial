@@ -53,7 +53,7 @@ if [ "$IS_GLOBAL" = true ]; then
     sc commands create "conjoiner-check" --command "conjoiner version" --provider none --scope global --icon "🔗" >/dev/null 2>&1 || true
     sc commands create "security-audit" --command "Run an adversarial security review on recent changes using the adversarial-sentinel guidelines, checking for sandbox escapes, secrets leakage, and fail-open vulnerabilities." --scope global --icon "⚔️" >/dev/null 2>&1 || true
     sc project scripts set setup "fabrial doctor" --scope user >/dev/null 2>&1 || true
-    sc project scripts set run shield "shield proxy --port 8080" --scope user >/dev/null 2>&1 || true
+    sc project scripts set run shield "shield proxy --addr 127.0.0.1:8443 --tls" --scope user >/dev/null 2>&1 || true
     echo "✔ Successfully configured global App Settings for all paths and workspaces."
     exit 0
 fi
@@ -85,7 +85,7 @@ run = cfg.get('run', [])
 if not any(r.get('name') == 'shield' for r in run):
     run.append({
         'name': 'shield',
-        'commands': ['shield proxy --port 8080'],
+        'commands': ['shield proxy --addr 127.0.0.1:8443 --tls'],
         'default': False
     })
 cfg['run'] = run
