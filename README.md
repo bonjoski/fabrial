@@ -276,6 +276,19 @@ Manages resident fabric daemons (Locksmith, Argus, Aegisbox):
 fabrial daemon [status|start|stop|restart]
 ```
 
+### `fabrial integrate` / Super.engineering Integration
+Bootstraps the Bonjoski sovereign security fabric into agentic IDEs like [super.engineering](https://super.engineering). Configures setup verification hooks, background proxy run daemons, and shared slash commands (`/fabrial-doctor`, `/argus-audit`, `/airlock-status`, etc.):
+
+```bash
+# Using the fabrial CLI
+fabrial integrate superengineering [path]
+
+# Or via the standalone installer script:
+./scripts/install-superengineering.sh [path]
+# or:
+curl -fsSL https://raw.githubusercontent.com/bonjoski/fabrial/main/scripts/install-superengineering.sh | bash
+```
+
 ### `fabrial version`
 Prints version and status of the unified security fabric.
 

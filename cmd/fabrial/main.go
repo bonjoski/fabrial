@@ -18,6 +18,7 @@ import (
 	"github.com/bonjoski/airlock/pkg/doctor"
 	"github.com/bonjoski/airlock/pkg/secrets"
 	"github.com/bonjoski/fabrial/pkg/circuitbreaker"
+	"github.com/bonjoski/fabrial/pkg/integration"
 	"github.com/bonjoski/fabrial/pkg/router"
 	"github.com/bonjoski/fabrial/pkg/version"
 )
@@ -49,6 +50,9 @@ func main() {
 	case "daemon":
 		handleDaemon(args)
 
+	case "integrate", "init":
+		handleIntegrate(args)
+
 	case "circuit-breaker", "breaker":
 		handleCircuitBreaker(args)
 
@@ -67,6 +71,7 @@ Usage:
   fabrial exec [flags] [--] <command> [args...]
   fabrial doctor [--json]
   fabrial daemon [status|start|stop|restart]
+  fabrial integrate [superengineering] [path]
   fabrial version
 
 Core Execution Commands:
@@ -536,5 +541,53 @@ func handleCircuitBreaker(args []string) {
 
 	default:
 		fmt.Println("Usage: fabrial circuit-breaker [listen|status] [--socket <path>]")
+	}
+}
+
+func handleIntegrate(args []string) {
+	targetPlatform := "superengineering"
+	targetDir := "."
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "superengineering", "super.engineering", "--superengineering", "-s":
+			targetPlatform = "superengineering"
+		case "help", "-h", "--help":
+			fmt.Println(`Usage: fabrial integrate [superengineering] [path]
+Bootstrap Bonjoski sovereign security fabric into agentic environments.
+
+Supported targets:
+  superengineering    Generate/update .super.engineering/config.json with hooks and commands`)
+			os.Exit(0)
+		default:
+			if !strings.HasPrefix(arg, "-") {
+				targetDir = arg
+			}
+		}
+	}
+
+	switch targetPlatform {
+	case "superengineering":
+		res, err := integration.SuperEngineering(targetDir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: integration failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("💎 Integrated Bonjoski Sovereign Security Fabric into %s\n", res.ConfigPath)
+		if len(res.SetupAdded) > 0 {
+			fmt.Printf("  • Setup hook added: %s\n", strings.Join(res.SetupAdded, ", "))
+		}
+		if len(res.RunAdded) > 0 {
+			fmt.Printf("  • Managed run script added: %s\n", strings.Join(res.RunAdded, ", "))
+		}
+		if len(res.CommandsAdded) > 0 {
+			fmt.Printf("  • Slash commands configured: %s\n", strings.Join(res.CommandsAdded, ", "))
+		} else {
+			fmt.Printf("  • All commands already configured (idempotent)\n")
+		}
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown integration target: %s\n", targetPlatform)
+		os.Exit(1)
 	}
 }
