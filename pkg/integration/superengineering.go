@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 )
 
@@ -244,6 +245,69 @@ func SuperEngineering(targetDir string) (*Result, error) {
 	if err := os.Rename(tmpFile, configPath); err != nil {
 		_ = os.Remove(tmpFile)
 		return nil, fmt.Errorf("failed to atomically rename config %s: %w", configPath, err)
+	}
+
+	return result, nil
+}
+
+// SuperEngineeringGlobal installs the Bonjoski security fabric globally across all
+// paths and workspaces via super.engineering App Settings using the `sc` CLI.
+func SuperEngineeringGlobal() (*Result, error) {
+	scPath, err := exec.LookPath("sc")
+	if err != nil {
+		return nil, fmt.Errorf("'sc' CLI not found in PATH; super.engineering must be running for global App Settings installation")
+	}
+
+	result := &Result{
+		ConfigPath: "super.engineering App Settings (global)",
+	}
+
+	// 1. Get existing global commands to ensure idempotency
+	listCmd := exec.Command(scPath, "commands", "list", "--scope", "global", "--json")
+	out, err := listCmd.Output()
+	existingNames := make(map[string]bool)
+	if err == nil {
+		var listResp struct {
+			Commands []struct {
+				Name string `json:"name"`
+			} `json:"commands"`
+		}
+		if err := json.Unmarshal(out, &listResp); err == nil {
+			for _, c := range listResp.Commands {
+				existingNames[c.Name] = true
+			}
+		}
+	}
+
+	// 2. Register global commands
+	for _, def := range DefaultCommands() {
+		if !existingNames[def.Name] {
+			args := []string{"commands", "create", def.Name, "--command", def.Command, "--scope", "global"}
+			if def.ProviderPresetKey != "" {
+				args = append(args, "--provider", def.ProviderPresetKey)
+			}
+			if def.Icon != "" {
+				args = append(args, "--icon", def.Icon)
+			}
+			if def.AutoSubmit {
+				args = append(args, "--auto-submit")
+			}
+			cmd := exec.Command(scPath, args...)
+			if err := cmd.Run(); err == nil {
+				result.CommandsAdded = append(result.CommandsAdded, def.Name)
+			}
+		}
+	}
+
+	// 3. Register user fallback scripts
+	setupCmd := exec.Command(scPath, "project", "scripts", "set", "setup", "fabrial doctor", "--scope", "user")
+	if err := setupCmd.Run(); err == nil {
+		result.SetupAdded = append(result.SetupAdded, "fabrial doctor (user fallback)")
+	}
+
+	runCmd := exec.Command(scPath, "project", "scripts", "set", "run", "shield", "shield proxy --port 8080", "--scope", "user")
+	if err := runCmd.Run(); err == nil {
+		result.RunAdded = append(result.RunAdded, "shield (user fallback)")
 	}
 
 	return result, nil

@@ -5,25 +5,61 @@
 # Bootstrap the Bonjoski Sovereign AI Agent Security Fabric into super.engineering
 #
 # Usage:
-#   ./scripts/install-superengineering.sh [TARGET_DIR]
-#   curl -fsSL https://raw.githubusercontent.com/bonjoski/fabrial/main/scripts/install-superengineering.sh | bash
+#   ./scripts/install-superengineering.sh [--global] [TARGET_DIR]
+#   curl -fsSL https://raw.githubusercontent.com/bonjoski/fabrial/main/scripts/install-superengineering.sh | bash -s -- --global
 # ==============================================================================
 
 set -euo pipefail
 
-TARGET_DIR="${1:-.}"
-CONFIG_DIR="${TARGET_DIR}/.super.engineering"
-CONFIG_FILE="${CONFIG_DIR}/config.json"
+IS_GLOBAL=false
+TARGET_DIR="."
+
+for arg in "$@"; do
+    case "$arg" in
+        --global|-g)
+            IS_GLOBAL=true
+            ;;
+        *)
+            if [[ ! "$arg" =~ ^- ]]; then
+                TARGET_DIR="$arg"
+            fi
+            ;;
+    esac
+done
 
 echo "💎 Initializing Bonjoski Sovereign Security Fabric for super.engineering..."
 
 # If fabrial is installed and supports integrate, delegate to native CLI
 if command -v fabrial >/dev/null 2>&1 && fabrial --help 2>&1 | grep -q "integrate"; then
-    fabrial integrate superengineering "${TARGET_DIR}"
+    if [ "$IS_GLOBAL" = true ]; then
+        fabrial integrate superengineering --global
+    else
+        fabrial integrate superengineering "${TARGET_DIR}"
+    fi
     exit 0
 fi
 
 # Fallback: standalone initialization when fabrial CLI does not yet have 'integrate'
+if [ "$IS_GLOBAL" = true ]; then
+    if ! command -v sc >/dev/null 2>&1; then
+        echo "Error: 'sc' CLI not found. super.engineering must be installed to configure global App Settings." >&2
+        exit 1
+    fi
+    echo "  → Configuring global App Settings via 'sc' CLI (applies to ALL workspaces)..."
+    sc commands create "fabrial-doctor" --command "fabrial doctor" --provider none --scope global --icon "💎" >/dev/null 2>&1 || true
+    sc commands create "argus-audit" --command "argus scan ." --provider none --scope global --icon "👁️" >/dev/null 2>&1 || true
+    sc commands create "airlock-status" --command "airlock status" --provider none --scope global --icon "🔒" >/dev/null 2>&1 || true
+    sc commands create "shield-status" --command "shield status" --provider none --scope global --icon "🛡️" >/dev/null 2>&1 || true
+    sc commands create "conjoiner-check" --command "conjoiner version" --provider none --scope global --icon "🔗" >/dev/null 2>&1 || true
+    sc commands create "security-audit" --command "Run an adversarial security review on recent changes using the adversarial-sentinel guidelines, checking for sandbox escapes, secrets leakage, and fail-open vulnerabilities." --scope global --icon "⚔️" >/dev/null 2>&1 || true
+    sc project scripts set setup "fabrial doctor" --scope user >/dev/null 2>&1 || true
+    sc project scripts set run shield "shield proxy --port 8080" --scope user >/dev/null 2>&1 || true
+    echo "✔ Successfully configured global App Settings for all paths and workspaces."
+    exit 0
+fi
+
+CONFIG_DIR="${TARGET_DIR}/.super.engineering"
+CONFIG_FILE="${CONFIG_DIR}/config.json"
 mkdir -p "${CONFIG_DIR}"
 
 python3 -c "

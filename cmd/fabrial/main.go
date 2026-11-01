@@ -71,7 +71,7 @@ Usage:
   fabrial exec [flags] [--] <command> [args...]
   fabrial doctor [--json]
   fabrial daemon [status|start|stop|restart]
-  fabrial integrate [superengineering] [path]
+  fabrial integrate [superengineering] [path] [--global]
   fabrial version
 
 Core Execution Commands:
@@ -547,15 +547,21 @@ func handleCircuitBreaker(args []string) {
 func handleIntegrate(args []string) {
 	targetPlatform := "superengineering"
 	targetDir := "."
+	isGlobal := false
 
 	for i := 0; i < len(args); i++ {
 		arg := args[i]
 		switch arg {
 		case "superengineering", "super.engineering", "--superengineering", "-s":
 			targetPlatform = "superengineering"
+		case "--global", "-g":
+			isGlobal = true
 		case "help", "-h", "--help":
-			fmt.Println(`Usage: fabrial integrate [superengineering] [path]
+			fmt.Println(`Usage: fabrial integrate [superengineering] [path] [--global]
 Bootstrap Bonjoski sovereign security fabric into agentic environments.
+
+Options:
+  --global, -g        Install globally into App Settings across ALL paths/workspaces
 
 Supported targets:
   superengineering    Generate/update .super.engineering/config.json with hooks and commands`)
@@ -569,7 +575,13 @@ Supported targets:
 
 	switch targetPlatform {
 	case "superengineering":
-		res, err := integration.SuperEngineering(targetDir)
+		var res *integration.Result
+		var err error
+		if isGlobal {
+			res, err = integration.SuperEngineeringGlobal()
+		} else {
+			res, err = integration.SuperEngineering(targetDir)
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Error: integration failed: %v\n", err)
 			os.Exit(1)

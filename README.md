@@ -277,16 +277,18 @@ fabrial daemon [status|start|stop|restart]
 ```
 
 ### `fabrial integrate` / Super.engineering Integration
-Bootstraps the Bonjoski sovereign security fabric into agentic IDEs like [super.engineering](https://super.engineering). Configures setup verification hooks, background proxy run daemons, and shared slash commands (`/fabrial-doctor`, `/argus-audit`, `/airlock-status`, etc.):
+Bootstraps the Bonjoski sovereign security fabric into agentic IDEs like [super.engineering](https://super.engineering). Configures setup verification hooks, background proxy run daemons, and shared slash commands (`/fabrial-doctor`, `/argus-audit`, `/airlock-status`, etc.). Use `--global` to install across all paths and workspaces:
 
 ```bash
-# Using the fabrial CLI
-fabrial integrate superengineering [path]
+# Global installation (applies to ALL workspaces via App Settings):
+fabrial integrate superengineering --global
+# or via script:
+./scripts/install-superengineering.sh --global
 
-# Or via the standalone installer script:
+# Per-repository installation (writes .super.engineering/config.json in target repo):
+fabrial integrate superengineering [path]
+# or via script:
 ./scripts/install-superengineering.sh [path]
-# or:
-curl -fsSL https://raw.githubusercontent.com/bonjoski/fabrial/main/scripts/install-superengineering.sh | bash
 ```
 
 ### `fabrial version`
