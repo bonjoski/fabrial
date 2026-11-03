@@ -316,3 +316,78 @@ func TestExecute_Tier2_SucceedsWhenDaemonOnline(t *testing.T) {
 		t.Errorf("expected Tier 2 routing banner on stderr, got: %s", stderr.String())
 	}
 }
+
+func TestRoute_SoulcasterBuildWrapping(t *testing.T) {
+	opts := &ExecutionOptions{
+		Quiet:  true,
+		DryRun: true,
+	}
+
+	// Build command should wrap with soulcaster if soulcaster binary is present
+	dec, err := Route(opts, []string{"go", "build", "."})
+	if err != nil {
+		t.Fatalf("Route failed: %v", err)
+	}
+
+	joined := strings.Join(dec.ExecArgs, " ")
+	if !strings.Contains(joined, "soulcaster wrap -- go build .") {
+		t.Errorf("expected soulcaster wrap in execution args, got: %s", joined)
+	}
+
+	// If --no-attestation is passed, should NOT wrap
+	optsNoAttest := &ExecutionOptions{
+		Quiet:         true,
+		DryRun:        true,
+		NoAttestation: true,
+	}
+	decNoAttest, err := Route(optsNoAttest, []string{"go", "build", "."})
+	if err != nil {
+		t.Fatalf("Route failed: %v", err)
+	}
+	joinedNoAttest := strings.Join(decNoAttest.ExecArgs, " ")
+	if strings.Contains(joinedNoAttest, "soulcaster wrap") {
+		t.Errorf("expected no soulcaster wrap when --no-attestation is set, got: %s", joinedNoAttest)
+	}
+}
+
+func TestRoute_ShieldProxyInjection(t *testing.T) {
+	// Start dummy listener to simulate active Shield proxy
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("failed to listen on test tcp port: %v", err)
+	}
+	defer ln.Close()
+
+	addr := ln.Addr().String()
+	origEnv := os.Getenv("SHIELD_PROXY_ADDR")
+	defer func() {
+		if origEnv != "" {
+			_ = os.Setenv("SHIELD_PROXY_ADDR", origEnv)
+		} else {
+			_ = os.Unsetenv("SHIELD_PROXY_ADDR")
+		}
+	}()
+	_ = os.Setenv("SHIELD_PROXY_ADDR", addr)
+
+	opts := &ExecutionOptions{
+		Net:    true,
+		Quiet:  true,
+		DryRun: true,
+	}
+
+	dec, err := Route(opts, []string{"curl", "https://api.openai.com"})
+	if err != nil {
+		t.Fatalf("Route failed: %v", err)
+	}
+
+	foundProxy := false
+	for _, env := range dec.InjectedEnv {
+		if strings.HasPrefix(env, "HTTP_PROXY=") && strings.Contains(env, addr) {
+			foundProxy = true
+			break
+		}
+	}
+	if !foundProxy {
+		t.Errorf("expected HTTP_PROXY injected with %s, got env: %v", addr, dec.InjectedEnv)
+	}
+}

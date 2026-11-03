@@ -27,6 +27,8 @@ type ExecutionOptions struct {
 	SessionTicket string
 	Airgap        bool
 	Net           bool
+	NoAttestation bool
+	Shield        bool
 	Quiet         bool
 	DryRun        bool
 	Dir           string
@@ -37,12 +39,13 @@ type ExecutionOptions struct {
 
 // Decision represents the dynamic routing choice made by the fabric router.
 type Decision struct {
-	Tier       policy.Tier
-	Engine     string
-	BinaryPath string
-	ExecArgs   []string
-	Reason     string
-	Command    []string
+	Tier        policy.Tier
+	Engine      string
+	BinaryPath  string
+	ExecArgs    []string
+	InjectedEnv []string
+	Reason      string
+	Command     []string
 	Options    *ExecutionOptions
 	PolicyFile string
 }
@@ -173,6 +176,12 @@ func ParseArgs(args []string) (*ExecutionOptions, []string, error) {
 		case arg == "--net" || arg == "-net":
 			opts.Net = true
 
+		case arg == "--no-attestation" || arg == "-no-attestation":
+			opts.NoAttestation = true
+
+		case arg == "--shield" || arg == "-shield":
+			opts.Shield = true
+
 		case arg == "--quiet" || arg == "-quiet" || arg == "-q":
 			opts.Quiet = true
 
@@ -274,6 +283,30 @@ func Route(opts *ExecutionOptions, cmdArgs []string) (*Decision, error) {
 	var binPath string
 	var execArgs []string
 
+	// Build effective command args, wrapping build commands with soulcaster if available
+	effectiveCmdArgs := cmdArgs
+	if !opts.NoAttestation && isBuildCommand(cmdArgs) {
+		if soulcasterBin, err := FindExecutable("soulcaster"); err == nil && soulcasterBin != "" {
+			if len(cmdArgs) > 0 && cmdArgs[0] != "soulcaster" {
+				effectiveCmdArgs = append([]string{"soulcaster", "wrap", "--"}, cmdArgs...)
+			}
+		}
+	}
+
+	// Shield in-flight secret wire guard environment injection
+	var injectedEnv []string
+	if opts.Net || opts.Shield {
+		if addr, ok := DetectShieldProxy(); ok {
+			injectedEnv = append(injectedEnv,
+				"HTTP_PROXY=http://"+addr,
+				"HTTPS_PROXY=http://"+addr,
+				"http_proxy=http://"+addr,
+				"https_proxy=http://"+addr,
+				"SOVEREIGN_SHIELD_ACTIVE=1",
+			)
+		}
+	}
+
 	switch selectedTier {
 	case policy.Tier1:
 		targetEngine = "airlock"
@@ -301,7 +334,7 @@ func Route(opts *ExecutionOptions, cmdArgs []string) (*Decision, error) {
 		}
 
 		execArgs = append(execArgs, "--")
-		execArgs = append(execArgs, cmdArgs...)
+		execArgs = append(execArgs, effectiveCmdArgs...)
 
 	case policy.Tier2:
 		targetEngine = "aegisbox"
@@ -324,21 +357,22 @@ func Route(opts *ExecutionOptions, cmdArgs []string) (*Decision, error) {
 		}
 
 		execArgs = append(execArgs, "--")
-		execArgs = append(execArgs, cmdArgs...)
+		execArgs = append(execArgs, effectiveCmdArgs...)
 
 	default:
 		return nil, fmt.Errorf("unsupported tier: %v", selectedTier)
 	}
 
 	return &Decision{
-		Tier:       selectedTier,
-		Engine:     targetEngine,
-		BinaryPath: binPath,
-		ExecArgs:   execArgs,
-		Reason:     matchReason,
-		Command:    cmdArgs,
-		Options:    opts,
-		PolicyFile: policyFile,
+		Tier:        selectedTier,
+		Engine:      targetEngine,
+		BinaryPath:  binPath,
+		ExecArgs:    execArgs,
+		InjectedEnv: injectedEnv,
+		Reason:      matchReason,
+		Command:     cmdArgs,
+		Options:     opts,
+		PolicyFile:  policyFile,
 	}, nil
 }
 
@@ -363,11 +397,17 @@ func Execute(ctx context.Context, dec *Decision) (int, error) {
 	}
 
 	if dec.Options != nil && dec.Options.DryRun {
+		if len(dec.InjectedEnv) > 0 {
+			fmt.Fprintf(dec.Options.Stdout, "Injected-Env: %s\n", strings.Join(dec.InjectedEnv, " "))
+		}
 		fmt.Fprintf(dec.Options.Stdout, "Dry-run: %s %s\n", dec.BinaryPath, strings.Join(dec.ExecArgs, " "))
 		return 0, nil
 	}
 
 	cmd := exec.CommandContext(ctx, dec.BinaryPath, dec.ExecArgs...)
+	if len(dec.InjectedEnv) > 0 {
+		cmd.Env = append(os.Environ(), dec.InjectedEnv...)
+	}
 	if dec.Options != nil {
 		if dec.Options.Dir != "" {
 			cmd.Dir = dec.Options.Dir
@@ -464,4 +504,42 @@ func VerifyTier2Health() error {
 
 	_ = bin
 	return nil
+}
+
+// isBuildCommand checks if the command arguments match a compiler or build pipeline tool.
+func isBuildCommand(cmdArgs []string) bool {
+	if len(cmdArgs) == 0 {
+		return false
+	}
+	base := filepath.Base(cmdArgs[0])
+	switch base {
+	case "go":
+		return len(cmdArgs) > 1 && (cmdArgs[1] == "build" || cmdArgs[1] == "install")
+	case "cargo":
+		return len(cmdArgs) > 1 && (cmdArgs[1] == "build" || cmdArgs[1] == "check")
+	case "make", "cmake", "ninja":
+		return true
+	case "gcc", "g++", "clang", "clang++", "rustc":
+		return true
+	default:
+		return false
+	}
+}
+
+// DetectShieldProxy checks if Shield local proxy is listening on 127.0.0.1:8443, 127.0.0.1:8080, or SHIELD_PROXY_ADDR.
+func DetectShieldProxy() (string, bool) {
+	if s := os.Getenv("SHIELD_PROXY_ADDR"); s != "" {
+		if conn, err := net.DialTimeout("tcp", s, 150*time.Millisecond); err == nil {
+			_ = conn.Close()
+			return s, true
+		}
+	}
+	for _, addr := range []string{"127.0.0.1:8443", "127.0.0.1:8080"} {
+		conn, err := net.DialTimeout("tcp", addr, 150*time.Millisecond)
+		if err == nil {
+			_ = conn.Close()
+			return addr, true
+		}
+	}
+	return "", false
 }

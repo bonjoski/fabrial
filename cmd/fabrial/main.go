@@ -107,10 +107,16 @@ Execution Flags:
 func printVersion() {
 	fmt.Printf("💎 Fabrial Unified Fabric v%s\n", version.Version)
 	fmt.Println("Pillars:")
-	fmt.Println("  • Airlock:   Kernel Confinement & Zero-VM Sandbox")
-	fmt.Println("  • Locksmith: Biometric Hardware Vault & ETX Lease Engine")
-	fmt.Println("  • Aegisbox:  Hardware MicroVM & Shadow CoW Workspace")
-	fmt.Println("  • Argus:     Pre-Gate AST Inspection & SIEM Telemetry Bus")
+	fmt.Println("  • Airlock:    Kernel Confinement & Zero-VM Sandbox")
+	fmt.Println("  • Aegisbox:   Hardware MicroVM & Shadow CoW Workspace")
+	fmt.Println("  • Argus:      Pre-Gate AST Inspection & SIEM Telemetry Bus")
+	fmt.Println("  • Locksmith:  Biometric Hardware Vault & ETX Lease Engine")
+	fmt.Println("  • Shield:     Secret Redaction & Fail-Closed Wire Guard Proxy")
+	fmt.Println("  • Conjoiner:  NIST SP 800-207A Agentic IAM & DPoP Token Broker")
+	fmt.Println("  • Stormcage:  Cross-Agent Context & Memory Firewall")
+	fmt.Println("  • Soulcaster: Runtime Hermetic Compiler Attestation & SLSA Provenance")
+	fmt.Println("  • Bomhound:   CycloneDX Legal Attribution & Copyright Engine")
+	fmt.Println("  • Spanreed:   Strategic Architecture & AI-DLC Governance Registry")
 }
 
 func handleExec(args []string) {
@@ -247,13 +253,128 @@ func handleDoctor(args []string) {
 		Details: argusDetails,
 	})
 
+	// 5. Check Shield Secret Redaction & Fail-Closed Wire Guard Proxy
+	shieldBin, shieldBinErr := router.FindExecutable("shield")
+	proxyAddr, proxyOnline := router.DetectShieldProxy()
+	shieldStatus := "OFFLINE"
+	shieldDetails := "shield binary not found on PATH"
+	if proxyOnline {
+		shieldStatus = "ONLINE"
+		if shieldBinErr == nil {
+			shieldDetails = fmt.Sprintf("Wire guard proxy active on %s (binary at %s)", proxyAddr, shieldBin)
+		} else {
+			shieldDetails = fmt.Sprintf("Wire guard proxy active on %s", proxyAddr)
+		}
+	} else if shieldBinErr == nil {
+		shieldStatus = "DEGRADED"
+		shieldDetails = fmt.Sprintf("Available at %s (proxy offline; run 'fabrial daemon start' or 'shield proxy')", shieldBin)
+	}
+	results = append(results, PillarHealth{
+		Pillar:  "Shield",
+		Role:    "Secret Redaction & Fail-Closed Wire Guard",
+		Status:  shieldStatus,
+		Details: shieldDetails,
+	})
+
+	// 6. Check Conjoiner NIST Agentic IAM Broker & DPoP Engine
+	conjoinerBin, cjBinErr := router.FindExecutable("conjoiner")
+	conjoinerSock := resolveConjoinerSocketPath()
+	cjStatus := "OFFLINE"
+	cjDetails := "conjoiner binary not found on PATH"
+	cjSockOnline := false
+	if conn, err := net.DialTimeout("unix", conjoinerSock, 300*time.Millisecond); err == nil {
+		_ = conn.Close()
+		cjSockOnline = true
+	}
+	if cjSockOnline {
+		cjStatus = "ONLINE"
+		cjDetails = fmt.Sprintf("Active on %s (NIST NHI DPoP broker)", conjoinerSock)
+	} else if cjBinErr == nil {
+		cjStatus = "READY"
+		cjDetails = fmt.Sprintf("Available at %s (stateless DPoP & token engine ready)", conjoinerBin)
+	}
+	results = append(results, PillarHealth{
+		Pillar:  "Conjoiner",
+		Role:    "NIST Agentic IAM Broker & DPoP Gateway",
+		Status:  cjStatus,
+		Details: cjDetails,
+	})
+
+	// 7. Check Stormcage Context & Memory Firewall
+	stormBin, stormBinErr := router.FindExecutable("stormcage")
+	stormStatus := "OFFLINE"
+	stormDetails := "stormcage binary not found on PATH"
+	stormOnline := false
+	if conn, err := net.DialTimeout("tcp", "127.0.0.1:8088", 150*time.Millisecond); err == nil {
+		_ = conn.Close()
+		stormOnline = true
+	}
+	if stormOnline {
+		stormStatus = "ONLINE"
+		stormDetails = fmt.Sprintf("Context firewall daemon active on 127.0.0.1:8088 (binary at %s)", stormBin)
+	} else if stormBinErr == nil {
+		stormStatus = "READY"
+		stormDetails = fmt.Sprintf("Available at %s (inline sanitizer & AST normalizer ready)", stormBin)
+	}
+	results = append(results, PillarHealth{
+		Pillar:  "Stormcage",
+		Role:    "Context & Memory Prompt Firewall",
+		Status:  stormStatus,
+		Details: stormDetails,
+	})
+
+	// 8. Check Soulcaster Compiler Attestation & SLSA Provenance
+	soulBin, soulBinErr := router.FindExecutable("soulcaster")
+	soulStatus := "OFFLINE"
+	soulDetails := "soulcaster binary not found on PATH"
+	if soulBinErr == nil {
+		soulStatus = "READY"
+		soulDetails = fmt.Sprintf("Available at %s (in-toto v1.0 & SLSA v1.0 provenance active)", soulBin)
+	}
+	results = append(results, PillarHealth{
+		Pillar:  "Soulcaster",
+		Role:    "Runtime Compiler Attestation & SLSA Provenance",
+		Status:  soulStatus,
+		Details: soulDetails,
+	})
+
+	// 9. Check Bomhound CycloneDX Legal Attribution
+	bomBin, bomBinErr := router.FindExecutable("bomhound")
+	bomStatus := "OFFLINE"
+	bomDetails := "bomhound binary not found on PATH"
+	if bomBinErr == nil {
+		bomStatus = "READY"
+		bomDetails = fmt.Sprintf("Available at %s (CycloneDX legal attribution engine active)", bomBin)
+	}
+	results = append(results, PillarHealth{
+		Pillar:  "Bomhound",
+		Role:    "CycloneDX Legal Attribution & SBOM Engine",
+		Status:  bomStatus,
+		Details: bomDetails,
+	})
+
+	// 10. Check Spanreed Strategic Planning Hub
+	spanreedPath := resolveSpanreedPath()
+	spanreedStatus := "OFFLINE"
+	spanreedDetails := "spanreed repository or registry not found"
+	if spanreedPath != "" {
+		spanreedStatus = "READY"
+		spanreedDetails = fmt.Sprintf("Active at %s (AI-DLC planning state machine & RFC registry)", spanreedPath)
+	}
+	results = append(results, PillarHealth{
+		Pillar:  "Spanreed",
+		Role:    "Strategic Architecture & AI-DLC Governance",
+		Status:  spanreedStatus,
+		Details: spanreedDetails,
+	})
+
 	if asJSON {
 		_ = json.NewEncoder(os.Stdout).Encode(results)
 		return
 	}
 
-	fmt.Println("💎 Fabrial Multi-Pillar Diagnostic Suite")
-	fmt.Println(strings.Repeat("─", 65))
+	fmt.Println("💎 Fabrial Universal Security Fabric Diagnostic Suite")
+	fmt.Println(strings.Repeat("─", 75))
 	for _, r := range results {
 		icon := "✅"
 		if r.Status == "OFFLINE" || r.Status == "DEGRADED" {
@@ -262,7 +383,7 @@ func handleDoctor(args []string) {
 		fmt.Printf("%s %-12s [%-8s] %s\n", icon, r.Pillar, r.Status, r.Role)
 		fmt.Printf("   Details: %s\n", r.Details)
 	}
-	fmt.Println(strings.Repeat("─", 65))
+	fmt.Println(strings.Repeat("─", 75))
 }
 
 func handleDaemon(args []string) {
@@ -401,6 +522,34 @@ func startDaemons() {
 		}
 	}
 
+	// 4. Shield Proxy Daemon
+	if _, online := router.DetectShieldProxy(); online {
+		fmt.Println("✔ Shield fail-closed wire guard proxy is already active (127.0.0.1:8443)")
+	} else {
+		shieldBin, err := router.FindExecutable("shield")
+		if err != nil {
+			fmt.Printf("⚠️  Shield: %v (install via 'brew install bonjoski/tap/shield')\n", err)
+		} else {
+			home, _ := os.UserHomeDir()
+			shieldDir := filepath.Join(home, ".shield")
+			_ = os.MkdirAll(shieldDir, 0700)
+			logFile, err := os.OpenFile(filepath.Join(shieldDir, "proxy.log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+			cmd := exec.Command(shieldBin, "proxy", "--addr", "127.0.0.1:8443", "--tls")
+			if err == nil {
+				cmd.Stdout = logFile
+				cmd.Stderr = logFile
+			}
+			if err := cmd.Start(); err != nil {
+				fmt.Printf("⚠️  Shield proxy start: %v\n", err)
+			} else {
+				pidFile := filepath.Join(shieldDir, "shield.pid")
+				_ = os.WriteFile(pidFile, []byte(strconv.Itoa(cmd.Process.Pid)), 0600)
+				time.Sleep(150 * time.Millisecond)
+				fmt.Printf("✔ Shield wire guard proxy started (PID %d, 127.0.0.1:8443)\n", cmd.Process.Pid)
+			}
+		}
+	}
+
 	fmt.Println(strings.Repeat("─", 65))
 	fmt.Println("💎 Run 'fabrial doctor' to verify multi-pillar health.")
 }
@@ -464,8 +613,59 @@ func stopDaemons() {
 	aegisSock := router.ResolveAegisboxSocketPath()
 	_ = os.Remove(aegisSock)
 
+	// 4. Stop Shield Proxy
+	home, _ = os.UserHomeDir()
+	shieldPidFile := filepath.Join(home, ".shield", "shield.pid")
+	if data, err := os.ReadFile(shieldPidFile); err == nil {
+		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil && pid > 0 {
+			_ = terminateProcess(pid)
+			_ = os.Remove(shieldPidFile)
+			fmt.Printf("✔ Shield wire guard proxy stopped (PID %d)\n", pid)
+		}
+	} else {
+		_ = exec.Command("pkill", "-f", "shield proxy").Run()
+	}
+
 	fmt.Println(strings.Repeat("─", 65))
 	fmt.Println("💎 All resident fabric daemons stopped.")
+}
+
+func resolveConjoinerSocketPath() string {
+	if s := os.Getenv("CONJOINER_SOCKET"); s != "" {
+		return s
+	}
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" {
+		p := filepath.Join(home, ".conjoiner", "conjoiner.sock")
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	tmpCandidate := filepath.Join(os.TempDir(), fmt.Sprintf("conjoiner-%d.sock", os.Getuid()))
+	if _, err := os.Stat(tmpCandidate); err == nil {
+		return tmpCandidate
+	}
+	return filepath.Join(os.TempDir(), "conjoiner.sock")
+}
+
+func resolveSpanreedPath() string {
+	if s := os.Getenv("SPANREED_PATH"); s != "" {
+		if fi, err := os.Stat(s); err == nil && fi.IsDir() {
+			return s
+		}
+	}
+	home, _ := os.UserHomeDir()
+	candidates := []string{
+		filepath.Join(home, "code", "spanreed"),
+		filepath.Join(home, ".spanreed"),
+		filepath.Join(".", "spanreed"),
+	}
+	for _, c := range candidates {
+		if fi, err := os.Stat(filepath.Join(c, "docs", "plans")); err == nil && fi.IsDir() {
+			return c
+		}
+	}
+	return ""
 }
 
 func resolveArgusSocketPath() string {

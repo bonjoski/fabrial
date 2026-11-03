@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"os"
@@ -59,10 +60,14 @@ func TestFabrial_Doctor(t *testing.T) {
 		handleDoctor([]string{})
 	})
 
-	if !strings.Contains(out, "Fabrial Multi-Pillar Diagnostic Suite") {
+	if !strings.Contains(out, "Fabrial Universal Security Fabric Diagnostic Suite") {
 		t.Fatalf("unexpected doctor output: %s", out)
 	}
-	for _, pillar := range []string{"Airlock", "Locksmith", "Aegisbox", "Argus"} {
+	allPillars := []string{
+		"Airlock", "Locksmith", "Aegisbox", "Argus",
+		"Shield", "Conjoiner", "Stormcage", "Soulcaster", "Bomhound", "Spanreed",
+	}
+	for _, pillar := range allPillars {
 		if !strings.Contains(out, pillar) {
 			t.Fatalf("doctor output missing pillar %q: %s", pillar, out)
 		}
@@ -74,8 +79,15 @@ func TestFabrial_DoctorJSON(t *testing.T) {
 		handleDoctor([]string{"--json"})
 	})
 
-	if !strings.Contains(out, `"pillar":"Airlock"`) {
-		t.Fatalf("expected JSON output containing Airlock pillar, got: %s", out)
+	allPillars := []string{
+		"Airlock", "Locksmith", "Aegisbox", "Argus",
+		"Shield", "Conjoiner", "Stormcage", "Soulcaster", "Bomhound", "Spanreed",
+	}
+	for _, pillar := range allPillars {
+		expected := fmt.Sprintf(`"pillar":%q`, pillar)
+		if !strings.Contains(out, expected) {
+			t.Fatalf("expected JSON output containing %s pillar (%s), got: %s", pillar, expected, out)
+		}
 	}
 }
 
@@ -84,7 +96,7 @@ func TestFabrial_DaemonStatus(t *testing.T) {
 		handleDaemon([]string{"status"})
 	})
 
-	if !strings.Contains(out, "Fabrial Multi-Pillar Diagnostic Suite") {
+	if !strings.Contains(out, "Fabrial Universal Security Fabric Diagnostic Suite") {
 		t.Fatalf("unexpected daemon status output: %s", out)
 	}
 }

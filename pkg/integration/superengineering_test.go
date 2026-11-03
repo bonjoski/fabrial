@@ -18,8 +18,8 @@ func TestSuperEngineering_FreshDirectory(t *testing.T) {
 	if !res.Created {
 		t.Errorf("expected Created to be true on fresh directory")
 	}
-	if len(res.CommandsAdded) != 6 {
-		t.Errorf("expected 6 commands added, got %d", len(res.CommandsAdded))
+	if len(res.CommandsAdded) != 9 {
+		t.Errorf("expected 9 commands added, got %d", len(res.CommandsAdded))
 	}
 	if len(res.SetupAdded) != 1 || res.SetupAdded[0] != "fabrial doctor" {
 		t.Errorf("unexpected SetupAdded: %v", res.SetupAdded)
@@ -46,8 +46,8 @@ func TestSuperEngineering_FreshDirectory(t *testing.T) {
 	}
 
 	cmdList := parsed["commands"].([]interface{})
-	if len(cmdList) != 6 {
-		t.Errorf("expected 6 commands in JSON, got %d", len(cmdList))
+	if len(cmdList) != 9 {
+		t.Errorf("expected 9 commands in JSON, got %d", len(cmdList))
 	}
 }
 
@@ -131,7 +131,7 @@ func TestSuperEngineering_PreservesExistingConfig(t *testing.T) {
 	}
 
 	cmdList := parsed["commands"].([]interface{})
-	if len(cmdList) != 7 { // 1 existing + 6 default
-		t.Errorf("expected 7 commands, got %d", len(cmdList))
+	if len(cmdList) != 10 { // 1 existing + 9 default
+		t.Errorf("expected 10 commands, got %d", len(cmdList))
 	}
 }

@@ -51,6 +51,9 @@ if [ "$IS_GLOBAL" = true ]; then
     sc commands create "airlock-status" --command "airlock status" --provider none --scope global --icon "🔒" >/dev/null 2>&1 || true
     sc commands create "shield-status" --command "shield status" --provider none --scope global --icon "🛡️" >/dev/null 2>&1 || true
     sc commands create "conjoiner-check" --command "conjoiner version" --provider none --scope global --icon "🔗" >/dev/null 2>&1 || true
+    sc commands create "stormcage-scan" --command "stormcage scan" --provider none --scope global --icon "⚡" >/dev/null 2>&1 || true
+    sc commands create "soulcaster-verify" --command "soulcaster verify" --provider none --scope global --icon "🔮" >/dev/null 2>&1 || true
+    sc commands create "bomhound-enrich" --command "bomhound ." --provider none --scope global --icon "🐾" >/dev/null 2>&1 || true
     sc commands create "security-audit" --command "Run an adversarial security review on recent changes using the adversarial-sentinel guidelines, checking for sandbox escapes, secrets leakage, and fail-open vulnerabilities." --scope global --icon "⚔️" >/dev/null 2>&1 || true
     sc project scripts set setup "fabrial doctor" --scope user >/dev/null 2>&1 || true
     sc project scripts set run shield "shield proxy --addr 127.0.0.1:8443 --tls" --scope user >/dev/null 2>&1 || true
@@ -100,6 +103,9 @@ defaults = [
     {'name': 'airlock-status', 'command': 'airlock status', 'provider_preset_key': 'none', 'icon': '🔒'},
     {'name': 'shield-status', 'command': 'shield status', 'provider_preset_key': 'none', 'icon': '🛡️'},
     {'name': 'conjoiner-check', 'command': 'conjoiner version', 'provider_preset_key': 'none', 'icon': '🔗'},
+    {'name': 'stormcage-scan', 'command': 'stormcage scan', 'provider_preset_key': 'none', 'icon': '⚡'},
+    {'name': 'soulcaster-verify', 'command': 'soulcaster verify', 'provider_preset_key': 'none', 'icon': '🔮'},
+    {'name': 'bomhound-enrich', 'command': 'bomhound .', 'provider_preset_key': 'none', 'icon': '🐾'},
     {'name': 'security-audit', 'command': 'Run an adversarial security review on recent changes using the adversarial-sentinel guidelines, checking for sandbox escapes, secrets leakage, and fail-open vulnerabilities.', 'icon': '⚔️'},
 ]
 
