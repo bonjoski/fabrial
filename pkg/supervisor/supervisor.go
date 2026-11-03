@@ -145,6 +145,16 @@ func NewDefaultSupervisor() *Supervisor {
 	return &Supervisor{Services: services}
 }
 
+// GetService returns the service definition matching name (case-insensitive).
+func (s *Supervisor) GetService(name string) (ServiceDef, bool) {
+	for _, def := range s.Services {
+		if strings.EqualFold(def.Name, name) || strings.EqualFold(def.BinaryName, name) {
+			return def, true
+		}
+	}
+	return ServiceDef{}, false
+}
+
 // StartAll starts all configured resident daemons that are not already online.
 func (s *Supervisor) StartAll(ctx context.Context) []ServiceStatus {
 	var statuses []ServiceStatus

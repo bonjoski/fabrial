@@ -7,13 +7,18 @@ import (
 	"fmt"
 	"net"
 	"os"
+	"os/exec"
+	"os/signal"
+	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/bonjoski/fabrial/pkg/circuitbreaker"
 	"github.com/bonjoski/fabrial/pkg/doctor"
 	"github.com/bonjoski/fabrial/pkg/integration"
 	"github.com/bonjoski/fabrial/pkg/router"
+	"github.com/bonjoski/fabrial/pkg/server"
 	"github.com/bonjoski/fabrial/pkg/supervisor"
 	"github.com/bonjoski/fabrial/pkg/version"
 )
@@ -51,6 +56,12 @@ func main() {
 	case "circuit-breaker", "breaker":
 		handleCircuitBreaker(args)
 
+	case "serve":
+		handleServe(args)
+
+	case "ui", "cockpit":
+		handleUI(args)
+
 	default:
 		// Direct shorthand: if first arg is a flag or executable, run it
 		handleExec(os.Args[1:])
@@ -66,6 +77,8 @@ Usage:
   fabrial exec [flags] [--] <command> [args...]
   fabrial doctor [--json]
   fabrial daemon [status|start|stop|restart]
+  fabrial serve [--socket <path>] [--port <port>]
+  fabrial ui
   fabrial integrate [superengineering] [path] [--global]
   fabrial version
 
@@ -336,4 +349,90 @@ Supported targets:
 		fmt.Fprintf(os.Stderr, "Unknown integration target: %s\n", targetPlatform)
 		os.Exit(1)
 	}
+}
+
+func handleServe(args []string) {
+	sockPath := server.DefaultSocketPath()
+	tcpAddr := "127.0.0.1:9191"
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--socket", "-s":
+			if i+1 < len(args) {
+				sockPath = args[i+1]
+				i++
+			}
+		case "--addr", "-a":
+			if i+1 < len(args) {
+				tcpAddr = args[i+1]
+				i++
+			}
+		case "--no-tcp":
+			tcpAddr = ""
+		case "--port", "-p":
+			if i+1 < len(args) {
+				tcpAddr = "127.0.0.1:" + args[i+1]
+				i++
+			}
+		}
+	}
+
+	srv := server.NewServer(server.Config{
+		SocketPath: sockPath,
+		TCPAddr:    tcpAddr,
+	})
+
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+
+	if err := srv.Start(ctx); err != nil {
+		fmt.Fprintf(os.Stderr, "fabrial serve: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println("💎 Fabrial Sovereign Control Plane Server")
+	fmt.Println(strings.Repeat("─", 65))
+	if sockPath != "" {
+		fmt.Printf("✔ IPC Socket: %s (0600 mode)\n", sockPath)
+	}
+	if tcpAddr != "" {
+		fmt.Printf("✔ HTTP API:   http://%s (CSRF/DNS rebinding protected)\n", tcpAddr)
+	}
+	fmt.Println("✔ Telemetry:  /api/v1/events (SSE stream)")
+	fmt.Println(strings.Repeat("─", 65))
+	fmt.Println("Press Ctrl+C to shutdown.")
+
+	<-ctx.Done()
+	fmt.Println("\n💎 Shutting down Fabrial control plane...")
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer stopCancel()
+	_ = srv.Stop(stopCtx)
+}
+
+func handleUI(args []string) {
+	home, _ := os.UserHomeDir()
+	candidates := []string{
+		"fabrial-cockpit",
+		filepath.Join(home, ".local", "bin", "fabrial-cockpit"),
+		"/Applications/Fabrial Cockpit.app/Contents/MacOS/fabrial-cockpit",
+	}
+
+	for _, cand := range candidates {
+		if bin, err := router.FindExecutable(cand); err == nil && bin != "" {
+			fmt.Printf("💎 Launching Fabrial Cockpit companion (%s)...\n", bin)
+			cmd := exec.Command(bin, args...)
+			cmd.Stdout = os.Stdout
+			cmd.Stderr = os.Stderr
+			if err := cmd.Start(); err != nil {
+				fmt.Fprintf(os.Stderr, "failed to launch cockpit: %v\n", err)
+				os.Exit(1)
+			}
+			return
+		}
+	}
+
+	fmt.Println("💎 Fabrial Cockpit Companion is not installed on PATH.")
+	fmt.Println("   Starting headless control plane API instead at http://127.0.0.1:9191...")
+	handleServe(args)
 }
