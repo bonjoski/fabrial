@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,6 +19,9 @@ import (
 	"github.com/bonjoski/fabrial/pkg/supervisor"
 	"github.com/bonjoski/fabrial/pkg/version"
 )
+
+// maxSSEClients defines the maximum concurrent SSE telemetry subscribers to prevent DoS.
+const maxSSEClients = 32
 
 // Config holds runtime configuration for the Fabrial API server.
 type Config struct {
@@ -85,6 +89,12 @@ func (s *Server) setupRoutes() {
 // Handler returns the HTTP handler with host/origin validation to defeat DNS rebinding.
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Invariant: Path traversal strictly rejected (fail-closed)
+		if strings.Contains(r.URL.RawPath, "..") || strings.Contains(r.URL.Path, "..") {
+			http.Error(w, "Bad Request: Path traversal forbidden", http.StatusBadRequest)
+			return
+		}
+
 		// Invariant: For TCP requests, reject foreign origins to prevent CSRF / DNS rebinding
 		if r.TLS == nil && r.Host != "" && !isLocalHost(r.Host) {
 			http.Error(w, "Forbidden: Invalid Host header for local control plane", http.StatusForbidden)
@@ -104,17 +114,32 @@ func (s *Server) Handler() http.Handler {
 
 func isLocalHost(host string) bool {
 	h := host
-	if colon := strings.Index(h, ":"); colon != -1 {
-		h = h[:colon]
+	if strings.Contains(h, ":") {
+		var err error
+		h, _, err = net.SplitHostPort(host)
+		if err != nil {
+			h = strings.Trim(host, "[]")
+		}
 	}
 	return h == "127.0.0.1" || h == "localhost" || h == "::1" || h == "unix" || h == ""
 }
 
 func isLocalOrigin(origin string) bool {
-	return strings.HasPrefix(origin, "http://localhost") ||
-		strings.HasPrefix(origin, "http://127.0.0.1") ||
-		strings.HasPrefix(origin, "tauri://") ||
-		strings.HasPrefix(origin, "wails://")
+	if origin == "" {
+		return true
+	}
+	u, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+	if u.Scheme == "tauri" || u.Scheme == "wails" {
+		return true
+	}
+	if u.Scheme == "http" || u.Scheme == "https" {
+		h := u.Hostname()
+		return h == "localhost" || h == "127.0.0.1" || h == "::1"
+	}
+	return false
 }
 
 func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
@@ -159,13 +184,20 @@ func (s *Server) handleDaemonAction(w http.ResponseWriter, r *http.Request) {
 
 	// Path format: /api/v1/daemons/{name}/{action}
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
-	if len(parts) < 5 {
+	if len(parts) != 5 {
 		http.Error(w, "Invalid path: expected /api/v1/daemons/{name}/{start|stop|restart}", http.StatusBadRequest)
 		return
 	}
 
 	name := parts[3]
 	action := parts[4]
+
+	// Invariant: Action whitelist enforcement
+	allowedActions := map[string]bool{"start": true, "stop": true, "restart": true}
+	if !allowedActions[action] {
+		http.Error(w, fmt.Sprintf("Unsupported action %q (allowed: start, stop, restart)", action), http.StatusBadRequest)
+		return
+	}
 
 	def, ok := s.cfg.Supervisor.GetService(name)
 	if !ok {
@@ -185,9 +217,6 @@ func (s *Server) handleDaemonAction(w http.ResponseWriter, r *http.Request) {
 		s.cfg.Supervisor.StopService(ctx, def)
 		time.Sleep(200 * time.Millisecond)
 		status = s.cfg.Supervisor.StartService(ctx, def)
-	default:
-		http.Error(w, fmt.Sprintf("Unsupported action: %q", action), http.StatusBadRequest)
-		return
 	}
 
 	s.BroadcastEvent(fmt.Sprintf(`{"type":"daemon_state_change","service":%q,"state":%q}`, name, status.State))
@@ -201,12 +230,18 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.sseMu.Lock()
+	if len(s.sseClients) >= maxSSEClients {
+		s.sseMu.Unlock()
+		http.Error(w, "Too Many Requests: SSE client pool capacity reached", http.StatusTooManyRequests)
+		return
+	}
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
 	msgChan := make(chan string, 16)
-	s.sseMu.Lock()
 	s.sseClients[msgChan] = struct{}{}
 	s.sseMu.Unlock()
 
