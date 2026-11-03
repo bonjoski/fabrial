@@ -208,3 +208,54 @@ tier1:
 		t.Errorf("expected default tier 2, got %v", loadedPol.GetDefaultTier())
 	}
 }
+
+func TestPolicy_V2SchemaAndAttestation(t *testing.T) {
+	yamlContent := `
+version: "2"
+name: "v2-policy"
+attestation:
+  enabled: true
+  engine: "soulcaster"
+  targets:
+    - "go build*"
+    - "cargo build*"
+shield:
+  enabled: true
+  proxy_addr: "127.0.0.1:8443"
+  auto_inject_env: true
+firewall:
+  enabled: true
+  engine: "stormcage"
+iam:
+  enabled: true
+  broker: "conjoiner"
+supply_chain:
+  auto_enrich_sbom: true
+  engine: "bomhound"
+`
+	var p Policy
+	if err := yaml.Unmarshal([]byte(yamlContent), &p); err != nil {
+		t.Fatalf("Unmarshal error: %v", err)
+	}
+
+	if p.Attestation == nil || !p.Attestation.Enabled {
+		t.Fatalf("expected attestation to be enabled")
+	}
+	if !p.ShouldAttest([]string{"go", "build", "."}) {
+		t.Errorf("expected go build to trigger ShouldAttest")
+	}
+	if !p.ShouldAttest([]string{"env", "go", "build", "."}) {
+		t.Errorf("expected env go build to trigger ShouldAttest")
+	}
+	if !p.ShouldAttest([]string{"/usr/bin/env", "-i", "go", "build", "."}) {
+		t.Errorf("expected /usr/bin/env go build to trigger ShouldAttest")
+	}
+	if p.ShouldAttest([]string{"eslint", "."}) {
+		t.Errorf("expected eslint NOT to trigger ShouldAttest")
+	}
+
+	sc := p.GetShieldConfig()
+	if !sc.Enabled || sc.ProxyAddr != "127.0.0.1:8443" {
+		t.Errorf("unexpected shield config: %+v", sc)
+	}
+}

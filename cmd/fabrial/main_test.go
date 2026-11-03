@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"net"
 	"os"
@@ -11,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bonjoski/fabrial/pkg/doctor"
 	"github.com/bonjoski/fabrial/pkg/router"
 )
 
@@ -79,14 +79,25 @@ func TestFabrial_DoctorJSON(t *testing.T) {
 		handleDoctor([]string{"--json"})
 	})
 
+	var report []doctor.PillarHealth
+	if err := json.Unmarshal([]byte(out), &report); err != nil {
+		t.Fatalf("failed to unmarshal JSON output: %v (raw: %s)", err, out)
+	}
+
 	allPillars := []string{
 		"Airlock", "Locksmith", "Aegisbox", "Argus",
 		"Shield", "Conjoiner", "Stormcage", "Soulcaster", "Bomhound", "Spanreed",
 	}
 	for _, pillar := range allPillars {
-		expected := fmt.Sprintf(`"pillar":%q`, pillar)
-		if !strings.Contains(out, expected) {
-			t.Fatalf("expected JSON output containing %s pillar (%s), got: %s", pillar, expected, out)
+		found := false
+		for _, p := range report {
+			if string(p.Pillar) == pillar {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("expected JSON output containing %s pillar, got: %s", pillar, out)
 		}
 	}
 }
@@ -96,7 +107,7 @@ func TestFabrial_DaemonStatus(t *testing.T) {
 		handleDaemon([]string{"status"})
 	})
 
-	if !strings.Contains(out, "Fabrial Universal Security Fabric Diagnostic Suite") {
+	if !strings.Contains(out, "Fabrial Resident Daemons Status") {
 		t.Fatalf("unexpected daemon status output: %s", out)
 	}
 }
@@ -155,14 +166,14 @@ func TestFabrial_Doctor_AegisboxSocketOnline(t *testing.T) {
 		handleDoctor([]string{"--json"})
 	})
 
-	var report []PillarHealth
+	var report []doctor.PillarHealth
 	if err := json.Unmarshal([]byte(out), &report); err != nil {
 		t.Fatalf("failed to unmarshal doctor output: %v (raw: %s)", err, out)
 	}
 
 	found := false
 	for _, p := range report {
-		if p.Pillar == "Aegisbox" {
+		if p.Pillar == doctor.PillarAegisbox {
 			found = true
 			if p.Status != "ONLINE" {
 				t.Fatalf("expected Aegisbox to report ONLINE status when daemon socket is active, got: %s", p.Status)
@@ -197,14 +208,14 @@ func TestFabrial_Doctor_AegisboxSocketOffline(t *testing.T) {
 		handleDoctor([]string{"--json"})
 	})
 
-	var report []PillarHealth
+	var report []doctor.PillarHealth
 	if err := json.Unmarshal([]byte(out), &report); err != nil {
 		t.Fatalf("failed to unmarshal doctor output: %v (raw: %s)", err, out)
 	}
 
 	found := false
 	for _, p := range report {
-		if p.Pillar == "Aegisbox" {
+		if p.Pillar == doctor.PillarAegisbox {
 			found = true
 			if p.Status != "DEGRADED" && p.Status != "OFFLINE" {
 				t.Fatalf("expected Aegisbox to report DEGRADED or OFFLINE status when daemon socket is offline, got: %s", p.Status)

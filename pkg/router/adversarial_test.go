@@ -324,3 +324,108 @@ func TestAdversarial_PolicyTampering(t *testing.T) {
 		t.Fatalf("FAIL-OPEN: Route succeeded with non-existent explicit policy path")
 	}
 }
+
+// TestAdversarial_BuildCommandObfuscationAndEvasion asserts that subagents cannot bypass
+// Soulcaster attestation wrapping via env wrappers, flag insertion, or casing tricks.
+func TestAdversarial_BuildCommandObfuscationAndEvasion(t *testing.T) {
+	testCases := []struct {
+		name string
+		cmd  []string
+	}{
+		{"EnvGoBuild", []string{"env", "go", "build", "."}},
+		{"UsrBinEnvGoBuild", []string{"/usr/bin/env", "go", "build", "."}},
+		{"EnvFlagsGoBuild", []string{"env", "-i", "FOO=BAR", "go", "build", "."}},
+		{"GoFlagsBuild", []string{"go", "-v", "build", "."}},
+		{"GoTestCompile", []string{"go", "test", "-c", "."}},
+		{"CargoOfflineBuild", []string{"cargo", "--offline", "build"}},
+		{"MakeWithJobs", []string{"make", "-j4"}},
+		{"UppercaseGCC", []string{"GCC", "main.c"}},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			if !isBuildCommand(tc.cmd) {
+				t.Fatalf("adversarial evasion succeeded: isBuildCommand failed to recognize %v as a build command", tc.cmd)
+			}
+		})
+	}
+}
+
+// TestAdversarial_SubagentTaskInjection asserts that task IDs cannot inject environment
+// variables (e.g. LD_PRELOAD) or escape via control characters.
+func TestAdversarial_SubagentTaskInjection(t *testing.T) {
+	maliciousTaskIDs := []string{
+		"task\nLD_PRELOAD=/evil.so",
+		"task\r\nEVIL=1",
+		"task=evil",
+		"task;rm -rf /",
+		"task with spaces",
+		"task\x00nullbyte",
+		"task$FOO",
+		"task`id`",
+	}
+
+	for _, taskID := range maliciousTaskIDs {
+		t.Run(taskID, func(t *testing.T) {
+			opts := &ExecutionOptions{
+				SubagentTask: taskID,
+				Quiet:        true,
+			}
+			_, err := Route(opts, []string{"echo", "hi"})
+			if err == nil {
+				t.Fatalf("FAIL-OPEN: Route allowed malicious subagent task ID %q", taskID)
+			}
+		})
+	}
+
+	// Valid task ID must succeed
+	validOpts := &ExecutionOptions{
+		SubagentTask: "agent-task_valid-123",
+		Quiet:        true,
+	}
+	dec, err := Route(validOpts, []string{"echo", "hi"})
+	if err != nil {
+		t.Fatalf("expected valid task ID to route cleanly, got err: %v", err)
+	}
+	found := false
+	for _, env := range dec.InjectedEnv {
+		if env == "CONJOINER_TASK_ID=agent-task_valid-123" {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected CONJOINER_TASK_ID in InjectedEnv: %v", dec.InjectedEnv)
+	}
+}
+
+// TestAdversarial_ShieldFailClosed asserts that when fail_closed is enabled for Shield,
+// network operations fail closed immediately when the proxy is offline.
+func TestAdversarial_ShieldFailClosed(t *testing.T) {
+	tmpDir := t.TempDir()
+	policyFile := filepath.Join(tmpDir, "fabrial.yaml")
+	policyContent := `version: "2.0"
+shield:
+  enabled: true
+  proxy_addr: "127.0.0.1:19999" # offline port
+  fail_closed: true
+`
+	if err := os.WriteFile(policyFile, []byte(policyContent), 0644); err != nil {
+		t.Fatalf("failed to write policy: %v", err)
+	}
+
+	opts := &ExecutionOptions{
+		PolicyPath: policyFile,
+		Net:        true,
+		Quiet:      true,
+	}
+
+	_, err := Route(opts, []string{"curl", "https://api.openai.com"})
+	if err == nil {
+		t.Fatalf("FAIL-OPEN: expected Route to abort when Shield proxy is offline and fail_closed: true")
+	}
+	if !strings.Contains(err.Error(), "Shield wire guard proxy offline") {
+		t.Fatalf("expected error mentioning Shield proxy offline, got: %v", err)
+	}
+}
+

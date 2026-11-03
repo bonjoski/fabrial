@@ -25,6 +25,7 @@ type ExecutionOptions struct {
 	PolicyPath    string
 	LeaseSecrets  string
 	SessionTicket string
+	SubagentTask  string
 	Airgap        bool
 	Net           bool
 	NoAttestation bool
@@ -89,7 +90,8 @@ func ParseArgs(args []string) (*ExecutionOptions, []string, error) {
 				arg == "--tier" || arg == "-tier" ||
 				arg == "--policy" || arg == "-policy" || arg == "-c" ||
 				arg == "--lease-secret" || arg == "-lease-secret" ||
-				arg == "--session-ticket" || arg == "-session-ticket" {
+				arg == "--session-ticket" || arg == "-session-ticket" ||
+				arg == "--subagent-task" || arg == "-subagent-task" {
 				flagArgs = append(flagArgs, arg)
 				if i+1 < len(args) {
 					flagArgs = append(flagArgs, args[i+1])
@@ -169,6 +171,16 @@ func ParseArgs(args []string) (*ExecutionOptions, []string, error) {
 
 		case strings.HasPrefix(arg, "--session-ticket="):
 			opts.SessionTicket = strings.TrimPrefix(arg, "--session-ticket=")
+
+		case arg == "--subagent-task" || arg == "-subagent-task":
+			if i+1 >= len(flagArgs) {
+				return nil, nil, fmt.Errorf("missing argument for %s", arg)
+			}
+			i++
+			opts.SubagentTask = flagArgs[i]
+
+		case strings.HasPrefix(arg, "--subagent-task="):
+			opts.SubagentTask = strings.TrimPrefix(arg, "--subagent-task=")
 
 		case arg == "--airgap" || arg == "-airgap":
 			opts.Airgap = true
@@ -256,17 +268,18 @@ func Route(opts *ExecutionOptions, cmdArgs []string) (*Decision, error) {
 	var matchReason string
 	var policyFile string
 
-	// 2. Explicit CLI override takes highest precedence
+	// 2. Discover and evaluate repository-level fabrial.yaml policy
+	pol, fPath, err := policy.LoadPolicy(opts.PolicyPath, opts.Dir)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load fabrial policy: %w", err)
+	}
+	policyFile = fPath
+
+	// CLI override takes highest precedence
 	if opts.TierOverride != policy.TierUnknown {
 		selectedTier = opts.TierOverride
 		matchReason = fmt.Sprintf("explicit CLI tier override (%s)", selectedTier.String())
 	} else {
-		// 3. Discover and evaluate repository-level fabrial.yaml policy
-		pol, fPath, err := policy.LoadPolicy(opts.PolicyPath, opts.Dir)
-		if err != nil {
-			return nil, fmt.Errorf("failed to load fabrial policy: %w", err)
-		}
-		policyFile = fPath
 		selectedTier, matchReason = pol.Match(cmdArgs)
 
 		// Airgap confinement guarantee:
@@ -283,9 +296,9 @@ func Route(opts *ExecutionOptions, cmdArgs []string) (*Decision, error) {
 	var binPath string
 	var execArgs []string
 
-	// Build effective command args, wrapping build commands with soulcaster if available
+	// Build effective command args, wrapping build commands with soulcaster if enabled by policy
 	effectiveCmdArgs := cmdArgs
-	if !opts.NoAttestation && isBuildCommand(cmdArgs) {
+	if !opts.NoAttestation && (pol.ShouldAttest(cmdArgs) || isBuildCommand(cmdArgs)) {
 		if soulcasterBin, err := FindExecutable("soulcaster"); err == nil && soulcasterBin != "" {
 			if len(cmdArgs) > 0 && cmdArgs[0] != "soulcaster" {
 				effectiveCmdArgs = append([]string{"soulcaster", "wrap", "--"}, cmdArgs...)
@@ -294,9 +307,10 @@ func Route(opts *ExecutionOptions, cmdArgs []string) (*Decision, error) {
 	}
 
 	// Shield in-flight secret wire guard environment injection
+	shieldCfg := pol.GetShieldConfig()
 	var injectedEnv []string
-	if opts.Net || opts.Shield {
-		if addr, ok := DetectShieldProxy(); ok {
+	if opts.Net || opts.Shield || (shieldCfg.Enabled && shieldCfg.AutoInjectEnv && opts.Net) {
+		if addr, ok := DetectShieldProxy(shieldCfg.ProxyAddr); ok {
 			injectedEnv = append(injectedEnv,
 				"HTTP_PROXY=http://"+addr,
 				"HTTPS_PROXY=http://"+addr,
@@ -304,7 +318,17 @@ func Route(opts *ExecutionOptions, cmdArgs []string) (*Decision, error) {
 				"https_proxy=http://"+addr,
 				"SOVEREIGN_SHIELD_ACTIVE=1",
 			)
+		} else if shieldCfg.FailClosed && (opts.Net || opts.Shield) {
+			return nil, errors.New("Shield wire guard proxy offline and fail-closed is active; execution halted to prevent credential leakage")
 		}
+	}
+
+	// Conjoiner DPoP subagent task binding
+	if opts.SubagentTask != "" {
+		if err := validateSubagentTaskID(opts.SubagentTask); err != nil {
+			return nil, fmt.Errorf("invalid subagent task ID: %w (fail-closed to prevent environment injection)", err)
+		}
+		injectedEnv = append(injectedEnv, "CONJOINER_TASK_ID="+opts.SubagentTask)
 	}
 
 	switch selectedTier {
@@ -506,35 +530,120 @@ func VerifyTier2Health() error {
 	return nil
 }
 
+// validateSubagentTaskID asserts that task tokens contain only safe alphanumeric characters,
+// hyphens, and underscores to prevent newline/environment injection into the execution plane.
+func validateSubagentTaskID(taskID string) error {
+	if taskID == "" {
+		return nil
+	}
+	if len(taskID) > 128 {
+		return errors.New("subagent task ID exceeds 128 character limit")
+	}
+	for _, r := range taskID {
+		if !((r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z') || (r >= '0' && r <= '9') || r == '_' || r == '-') {
+			return fmt.Errorf("invalid character %q in subagent task ID: must only contain [a-zA-Z0-9_-]", r)
+		}
+	}
+	return nil
+}
+
 // isBuildCommand checks if the command arguments match a compiler or build pipeline tool.
+// Unpeels wrappers like 'env' or '/usr/bin/env' and skips flags to defeat evasion.
 func isBuildCommand(cmdArgs []string) bool {
 	if len(cmdArgs) == 0 {
 		return false
 	}
-	base := filepath.Base(cmdArgs[0])
-	switch base {
+
+	// Unwrap wrappers like "env" or "/usr/bin/env"
+	args := cmdArgs
+	for len(args) > 0 {
+		base := strings.ToLower(filepath.Base(args[0]))
+		base = strings.TrimSuffix(base, ".exe")
+		if base == "env" {
+			args = args[1:]
+			// Skip env flags and KEY=VAL definitions
+			for len(args) > 0 {
+				if strings.HasPrefix(args[0], "-") {
+					args = args[1:]
+				} else if strings.Contains(args[0], "=") {
+					args = args[1:]
+				} else {
+					break
+				}
+			}
+			continue
+		}
+		break
+	}
+
+	if len(args) == 0 {
+		return false
+	}
+
+	tool := strings.ToLower(filepath.Base(args[0]))
+	tool = strings.TrimSuffix(tool, ".exe")
+
+	switch tool {
+	case "make", "cmake", "ninja", "gcc", "g++", "clang", "clang++", "rustc":
+		return true
+
 	case "go":
-		return len(cmdArgs) > 1 && (cmdArgs[1] == "build" || cmdArgs[1] == "install")
+		// Find first non-flag subcommand
+		for i := 1; i < len(args); i++ {
+			arg := args[i]
+			if strings.HasPrefix(arg, "-") {
+				continue
+			}
+			if arg == "build" || arg == "install" {
+				return true
+			}
+			if arg == "test" {
+				// Check for -c flag which compiles a test binary
+				for j := i + 1; j < len(args); j++ {
+					if args[j] == "-c" || strings.HasPrefix(args[j], "-c=") {
+						return true
+					}
+				}
+			}
+			break
+		}
+		return false
+
 	case "cargo":
-		return len(cmdArgs) > 1 && (cmdArgs[1] == "build" || cmdArgs[1] == "check")
-	case "make", "cmake", "ninja":
-		return true
-	case "gcc", "g++", "clang", "clang++", "rustc":
-		return true
+		// Find first non-flag subcommand
+		for i := 1; i < len(args); i++ {
+			arg := args[i]
+			if strings.HasPrefix(arg, "-") {
+				continue
+			}
+			if arg == "build" || arg == "check" {
+				return true
+			}
+			break
+		}
+		return false
+
 	default:
 		return false
 	}
 }
 
-// DetectShieldProxy checks if Shield local proxy is listening on 127.0.0.1:8443, 127.0.0.1:8080, or SHIELD_PROXY_ADDR.
-func DetectShieldProxy() (string, bool) {
+// DetectShieldProxy checks if Shield local proxy is listening on preferred addrs, 127.0.0.1:8443, 127.0.0.1:8080, or SHIELD_PROXY_ADDR.
+func DetectShieldProxy(preferred ...string) (string, bool) {
 	if s := os.Getenv("SHIELD_PROXY_ADDR"); s != "" {
 		if conn, err := net.DialTimeout("tcp", s, 150*time.Millisecond); err == nil {
 			_ = conn.Close()
 			return s, true
 		}
 	}
-	for _, addr := range []string{"127.0.0.1:8443", "127.0.0.1:8080"} {
+	var candidates []string
+	for _, p := range preferred {
+		if p != "" {
+			candidates = append(candidates, p)
+		}
+	}
+	candidates = append(candidates, "127.0.0.1:8443", "127.0.0.1:8080")
+	for _, addr := range candidates {
 		conn, err := net.DialTimeout("tcp", addr, 150*time.Millisecond)
 		if err == nil {
 			_ = conn.Close()

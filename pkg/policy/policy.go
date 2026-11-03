@@ -127,15 +127,67 @@ type RoutingConfig struct {
 	Rules       []Rule         `yaml:"rules,omitempty" json:"rules,omitempty"`
 }
 
+// AttestationConfig configures build-time hermetic attestation and provenance (Soulcaster).
+type AttestationConfig struct {
+	Enabled          bool     `yaml:"enabled" json:"enabled"`
+	Engine           string   `yaml:"engine,omitempty" json:"engine,omitempty"`
+	EnforceHermetic  bool     `yaml:"enforce_hermetic,omitempty" json:"enforce_hermetic,omitempty"`
+	Targets          []string `yaml:"targets,omitempty" json:"targets,omitempty"`
+	EmitSLSA         bool     `yaml:"emit_slsa,omitempty" json:"emit_slsa,omitempty"`
+	OutputProvenance string   `yaml:"output_provenance,omitempty" json:"output_provenance,omitempty"`
+}
+
+// ShieldConfig configures client-side secret redaction and egress wire guard (Shield).
+type ShieldConfig struct {
+	Enabled               bool    `yaml:"enabled" json:"enabled"`
+	ProxyAddr             string  `yaml:"proxy_addr,omitempty" json:"proxy_addr,omitempty"`
+	AutoInjectEnv         bool    `yaml:"auto_inject_env,omitempty" json:"auto_inject_env,omitempty"`
+	FailClosed            bool    `yaml:"fail_closed,omitempty" json:"fail_closed,omitempty"`
+	EntropyThreshold      float64 `yaml:"entropy_threshold,omitempty" json:"entropy_threshold,omitempty"`
+	StripUnicodeSmuggling bool    `yaml:"strip_unicode_smuggling,omitempty" json:"strip_unicode_smuggling,omitempty"`
+}
+
+// FirewallConfig configures prompt context and memory injection defense (Stormcage).
+type FirewallConfig struct {
+	Enabled           bool   `yaml:"enabled" json:"enabled"`
+	Engine            string `yaml:"engine,omitempty" json:"engine,omitempty"`
+	EnforceTaint      bool   `yaml:"enforce_taint,omitempty" json:"enforce_taint,omitempty"`
+	CacheVerdicts     bool   `yaml:"cache_verdicts,omitempty" json:"cache_verdicts,omitempty"`
+	RedactOnInjection bool   `yaml:"redact_on_injection,omitempty" json:"redact_on_injection,omitempty"`
+}
+
+// IAMConfig configures agentic non-human identity and DPoP token attenuation (Conjoiner).
+type IAMConfig struct {
+	Enabled                     bool   `yaml:"enabled" json:"enabled"`
+	Broker                      string `yaml:"broker,omitempty" json:"broker,omitempty"`
+	RequireDPoP                 bool   `yaml:"require_dpop,omitempty" json:"require_dpop,omitempty"`
+	DefaultTTL                  string `yaml:"default_ttl,omitempty" json:"default_ttl,omitempty"`
+	MaxTTL                      string `yaml:"max_ttl,omitempty" json:"max_ttl,omitempty"`
+	EnforceMonotonicAttenuation bool   `yaml:"enforce_monotonic_attenuation,omitempty" json:"enforce_monotonic_attenuation,omitempty"`
+}
+
+// SupplyChainConfig configures legal attribution and CycloneDX SBOM compliance (Bomhound).
+type SupplyChainConfig struct {
+	AutoEnrichSBOM         bool   `yaml:"auto_enrich_sbom" json:"auto_enrich_sbom"`
+	Engine                 string `yaml:"engine,omitempty" json:"engine,omitempty"`
+	Spec                   string `yaml:"spec,omitempty" json:"spec,omitempty"`
+	RetainCopyrightNotices bool   `yaml:"retain_copyright_notices,omitempty" json:"retain_copyright_notices,omitempty"`
+}
+
 // Policy defines the standardized schema for fabrial.yaml.
 type Policy struct {
-	Version     string         `yaml:"version" json:"version"`
-	Name        string         `yaml:"name,omitempty" json:"name,omitempty"`
-	DefaultTier Tier           `yaml:"default_tier,omitempty" json:"default_tier,omitempty"`
-	Tier1       TierDefinition `yaml:"tier1,omitempty" json:"tier1,omitempty"`
-	Tier2       TierDefinition `yaml:"tier2,omitempty" json:"tier2,omitempty"`
-	Routing     *RoutingConfig `yaml:"routing,omitempty" json:"routing,omitempty"`
-	Rules       []Rule         `yaml:"rules,omitempty" json:"rules,omitempty"`
+	Version     string             `yaml:"version" json:"version"`
+	Name        string             `yaml:"name,omitempty" json:"name,omitempty"`
+	DefaultTier Tier               `yaml:"default_tier,omitempty" json:"default_tier,omitempty"`
+	Tier1       TierDefinition     `yaml:"tier1,omitempty" json:"tier1,omitempty"`
+	Tier2       TierDefinition     `yaml:"tier2,omitempty" json:"tier2,omitempty"`
+	Routing     *RoutingConfig     `yaml:"routing,omitempty" json:"routing,omitempty"`
+	Rules       []Rule             `yaml:"rules,omitempty" json:"rules,omitempty"`
+	Attestation *AttestationConfig `yaml:"attestation,omitempty" json:"attestation,omitempty"`
+	Shield      *ShieldConfig      `yaml:"shield,omitempty" json:"shield,omitempty"`
+	Firewall    *FirewallConfig    `yaml:"firewall,omitempty" json:"firewall,omitempty"`
+	IAM         *IAMConfig         `yaml:"iam,omitempty" json:"iam,omitempty"`
+	SupplyChain *SupplyChainConfig `yaml:"supply_chain,omitempty" json:"supply_chain,omitempty"`
 }
 
 // GetDefaultTier returns the configured default tier or Tier1 if unspecified.
@@ -402,7 +454,116 @@ func DefaultPolicy() *Policy {
 				"sh *",
 			},
 		},
+		Attestation: &AttestationConfig{
+			Enabled:          true,
+			Engine:           "soulcaster",
+			EnforceHermetic:  true,
+			Targets:          []string{"go build*", "go install*", "cargo build*", "cargo check*", "make*", "cmake*", "ninja*", "gcc*", "g++*", "clang*", "rustc*"},
+			EmitSLSA:         true,
+			OutputProvenance: ".intoto.jsonl",
+		},
+		Shield: &ShieldConfig{
+			Enabled:          true,
+			ProxyAddr:        "127.0.0.1:8443",
+			AutoInjectEnv:    true,
+			FailClosed:       false,
+			EntropyThreshold: 4.2,
+		},
+		Firewall: &FirewallConfig{
+			Enabled:           true,
+			Engine:            "stormcage",
+			EnforceTaint:      true,
+			CacheVerdicts:     true,
+			RedactOnInjection: true,
+		},
+		IAM: &IAMConfig{
+			Enabled:                     true,
+			Broker:                      "conjoiner",
+			RequireDPoP:                 true,
+			DefaultTTL:                  "30s",
+			MaxTTL:                      "60s",
+			EnforceMonotonicAttenuation: true,
+		},
+		SupplyChain: &SupplyChainConfig{
+			AutoEnrichSBOM:         true,
+			Engine:                 "bomhound",
+			Spec:                   "cyclonedx-1.5",
+			RetainCopyrightNotices: true,
+		},
 	}
+}
+
+// ShouldAttest checks if the command should be wrapped with an attestation compiler wrapper (e.g. soulcaster).
+func (p *Policy) ShouldAttest(cmdArgs []string) bool {
+	if p == nil {
+		return false
+	}
+	if p.Attestation != nil && !p.Attestation.Enabled {
+		return false
+	}
+	if len(cmdArgs) == 0 {
+		return false
+	}
+
+	targets := []string{
+		"go build*", "go install*", "cargo build*", "cargo check*", "make*", "cmake*", "ninja*", "gcc*", "g++*", "clang*", "rustc*",
+	}
+	if p.Attestation != nil && len(p.Attestation.Targets) > 0 {
+		targets = p.Attestation.Targets
+	}
+
+	args := cmdArgs
+	// Unwrap environment wrappers (env, /usr/bin/env)
+	for len(args) > 0 {
+		base := strings.ToLower(filepath.Base(args[0]))
+		base = strings.TrimSuffix(base, ".exe")
+		if base == "env" {
+			args = args[1:]
+			for len(args) > 0 {
+				if strings.HasPrefix(args[0], "-") || strings.Contains(args[0], "=") {
+					args = args[1:]
+				} else {
+					break
+				}
+			}
+			continue
+		}
+		break
+	}
+	if len(args) == 0 {
+		return false
+	}
+
+	fullCmd := strings.TrimSpace(strings.Join(cmdArgs, " "))
+	unwrappedCmd := strings.TrimSpace(strings.Join(args, " "))
+	rawBin := cmdArgs[0]
+	bin := filepath.Base(rawBin)
+	unwrappedRawBin := args[0]
+	unwrappedBin := filepath.Base(unwrappedRawBin)
+
+	for _, pattern := range targets {
+		if matchPattern(pattern, bin, rawBin, fullCmd) || matchPattern(pattern, unwrappedBin, unwrappedRawBin, unwrappedCmd) {
+			return true
+		}
+	}
+	return false
+}
+
+// GetShieldConfig returns the configured Shield policy or defaults if active.
+func (p *Policy) GetShieldConfig() *ShieldConfig {
+	if p == nil || p.Shield == nil {
+		return &ShieldConfig{
+			Enabled:       true,
+			ProxyAddr:     "127.0.0.1:8443",
+			AutoInjectEnv: true,
+			FailClosed:    false,
+		}
+	}
+	cfg := *p.Shield
+	if cfg.ProxyAddr == "" {
+		cfg.ProxyAddr = "127.0.0.1:8443"
+	}
+	return &cfg
 }
 
 // LoadFromFile parses a fabrial.yaml policy from an explicit file path.
