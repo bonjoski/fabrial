@@ -65,7 +65,7 @@ func TestFabrial_Doctor(t *testing.T) {
 	}
 	allPillars := []string{
 		"Airlock", "Locksmith", "Aegisbox", "Argus",
-		"Shield", "Conjoiner", "Stormcage", "Soulcaster", "Bomhound", "Spanreed",
+		"Shield", "Conjoiner", "Stormcage", "Soulcaster", "Bomhound",
 	}
 	for _, pillar := range allPillars {
 		if !strings.Contains(out, pillar) {
@@ -86,7 +86,7 @@ func TestFabrial_DoctorJSON(t *testing.T) {
 
 	allPillars := []string{
 		"Airlock", "Locksmith", "Aegisbox", "Argus",
-		"Shield", "Conjoiner", "Stormcage", "Soulcaster", "Bomhound", "Spanreed",
+		"Shield", "Conjoiner", "Stormcage", "Soulcaster", "Bomhound",
 	}
 	for _, pillar := range allPillars {
 		found := false

@@ -1,5 +1,5 @@
 // Package doctor implements the universal multi-pillar diagnostic engine for Fabrial.
-// It probes all 10 sovereign AI agent security tools concurrently with strict socket security verification.
+// It probes all 9 sovereign AI agent security tools concurrently with strict socket security verification.
 package doctor
 
 import (
@@ -30,7 +30,6 @@ const (
 	PillarStormcage  PillarID = "Stormcage"
 	PillarSoulcaster PillarID = "Soulcaster"
 	PillarBomhound   PillarID = "Bomhound"
-	PillarSpanreed   PillarID = "Spanreed"
 )
 
 // Status represents the operational health of a pillar.
@@ -54,7 +53,7 @@ type PillarHealth struct {
 	Latency    time.Duration `json:"latency_ns,omitempty"`
 }
 
-// CanonicalOrder defines the authoritative presentation order for the 10 pillars.
+// CanonicalOrder defines the authoritative presentation order for the 9 security and supply-chain tools.
 var CanonicalOrder = []PillarID{
 	PillarAirlock,
 	PillarLocksmith,
@@ -65,7 +64,6 @@ var CanonicalOrder = []PillarID{
 	PillarStormcage,
 	PillarSoulcaster,
 	PillarBomhound,
-	PillarSpanreed,
 }
 
 // Inspector probes the health of all sovereign security tools.
@@ -97,7 +95,6 @@ func (in *Inspector) InspectAll(ctx context.Context, projectDir string) []Pillar
 		PillarStormcage:  in.probeStormcage,
 		PillarSoulcaster: in.probeSoulcaster,
 		PillarBomhound:   in.probeBomhound,
-		PillarSpanreed:   in.probeSpanreed,
 	}
 
 	for pid, probeFunc := range probers {
@@ -483,25 +480,6 @@ func (in *Inspector) probeBomhound(_ context.Context, _ string) PillarHealth {
 	}
 }
 
-func (in *Inspector) probeSpanreed(_ context.Context, _ string) PillarHealth {
-	p := ResolveSpanreedPath()
-	if p != "" {
-		return PillarHealth{
-			Pillar:  PillarSpanreed,
-			Role:    "Strategic Architecture & AI-DLC Governance",
-			Status:  StatusReady,
-			Details: fmt.Sprintf("Active at %s (AI-DLC planning state machine & RFC registry)", p),
-		}
-	}
-
-	return PillarHealth{
-		Pillar:  PillarSpanreed,
-		Role:    "Strategic Architecture & AI-DLC Governance",
-		Status:  StatusOffline,
-		Details: "spanreed repository or registry not found",
-	}
-}
-
 // FormatTable outputs human-readable tabular diagnostics with ASCII boundaries.
 func FormatTable(results []PillarHealth) string {
 	var sb strings.Builder
@@ -573,25 +551,4 @@ func ResolveConjoinerSocketPath() string {
 		return tmpCandidate
 	}
 	return filepath.Join(os.TempDir(), "conjoiner.sock")
-}
-
-// ResolveSpanreedPath searches for the spanreed root directory.
-func ResolveSpanreedPath() string {
-	if s := os.Getenv("SPANREED_PATH"); s != "" {
-		if fi, err := os.Stat(s); err == nil && fi.IsDir() {
-			return s
-		}
-	}
-	home, _ := os.UserHomeDir()
-	candidates := []string{
-		filepath.Join(home, "code", "spanreed"),
-		filepath.Join(home, ".spanreed"),
-		filepath.Join(".", "spanreed"),
-	}
-	for _, c := range candidates {
-		if fi, err := os.Stat(filepath.Join(c, "docs", "plans")); err == nil && fi.IsDir() {
-			return c
-		}
-	}
-	return ""
 }

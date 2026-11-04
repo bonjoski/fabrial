@@ -60,8 +60,8 @@ func TestServer_DoctorEndpoint(t *testing.T) {
 		t.Fatalf("failed to decode doctor json: %v", err)
 	}
 
-	if len(reports) != 10 {
-		t.Fatalf("expected 10 pillars in doctor response, got: %d", len(reports))
+	if len(reports) != len(doctor.CanonicalOrder) {
+		t.Fatalf("expected %d pillars in doctor response, got: %d", len(doctor.CanonicalOrder), len(reports))
 	}
 }
 

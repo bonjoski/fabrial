@@ -105,8 +105,6 @@ func (f *Fixer) fixPillarInternal(ctx context.Context, pillar PillarID) []FixAct
 		return f.fixAirlock(ctx)
 	case "conjoiner", PillarConjoiner:
 		return f.fixConjoiner(ctx)
-	case "spanreed", PillarSpanreed:
-		return f.fixSpanreed(ctx)
 	default:
 		return []FixAction{
 			{
@@ -481,27 +479,6 @@ func (f *Fixer) fixConjoiner(_ context.Context) []FixAction {
 				Details:     sock,
 			})
 		}
-	}
-
-	return actions
-}
-
-func (f *Fixer) fixSpanreed(_ context.Context) []FixAction {
-	var actions []FixAction
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return actions
-	}
-
-	fabDir := filepath.Join(home, ".fabrial")
-	if err := os.MkdirAll(fabDir, 0700); err == nil {
-		_ = os.Chmod(fabDir, 0700)
-		actions = append(actions, FixAction{
-			Pillar:      PillarSpanreed,
-			Description: "Verified ~/.fabrial governance control plane store (mode 0700)",
-			Success:     true,
-			Details:     fabDir,
-		})
 	}
 
 	return actions

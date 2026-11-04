@@ -154,7 +154,6 @@ func printVersion() {
 	fmt.Println("  • Stormcage:  Cross-Agent Context & Memory Firewall")
 	fmt.Println("  • Soulcaster: Runtime Hermetic Compiler Attestation & SLSA Provenance")
 	fmt.Println("  • Bomhound:   CycloneDX Legal Attribution & Copyright Engine")
-	fmt.Println("  • Spanreed:   Strategic Architecture & AI-DLC Governance Registry")
 }
 
 func handleExec(args []string) {

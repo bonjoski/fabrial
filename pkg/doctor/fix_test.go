@@ -128,9 +128,9 @@ func TestFixer_DaemonManagerInteraction(t *testing.T) {
 	fixer := NewFixer(inspector, dm, ".")
 
 	// Fix individual pillar
-	actions, report := fixer.FixPillar(ctx, PillarSpanreed)
-	if report.Pillar != PillarSpanreed {
-		t.Fatalf("expected Spanreed report, got: %s", report.Pillar)
+	actions, report := fixer.FixPillar(ctx, PillarAirlock)
+	if report.Pillar != PillarAirlock {
+		t.Fatalf("expected Airlock report, got: %s", report.Pillar)
 	}
 	_ = actions
 }
