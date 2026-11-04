@@ -637,12 +637,16 @@ func DetectShieldProxy(preferred ...string) (string, bool) {
 		}
 	}
 	var candidates []string
+	hasPreferred := false
 	for _, p := range preferred {
 		if p != "" {
 			candidates = append(candidates, p)
+			hasPreferred = true
 		}
 	}
-	candidates = append(candidates, "127.0.0.1:8443", "127.0.0.1:8080")
+	if !hasPreferred {
+		candidates = append(candidates, "127.0.0.1:8443", "127.0.0.1:8080")
+	}
 	for _, addr := range candidates {
 		conn, err := net.DialTimeout("tcp", addr, 150*time.Millisecond)
 		if err == nil {

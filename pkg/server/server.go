@@ -81,9 +81,11 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/health", s.handleHealth)
 	s.mux.HandleFunc("/api/v1/health", s.handleHealth)
 	s.mux.HandleFunc("/api/v1/doctor", s.handleDoctor)
+	s.mux.HandleFunc("/api/v1/doctor/fix", s.handleDoctorFix)
 	s.mux.HandleFunc("/api/v1/daemons", s.handleDaemons)
 	s.mux.HandleFunc("/api/v1/daemons/", s.handleDaemonAction)
 	s.mux.HandleFunc("/api/v1/events", s.handleEvents)
+	s.mux.HandleFunc("/", s.handleRoot)
 }
 
 // Handler returns the HTTP handler with host/origin validation to defeat DNS rebinding.
@@ -107,7 +109,6 @@ func (s *Server) Handler() http.Handler {
 			return
 		}
 
-		w.Header().Set("Content-Type", "application/json")
 		s.mux.ServeHTTP(w, r)
 	})
 }
@@ -147,6 +148,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(map[string]interface{}{
 		"status":    "ok",
 		"version":   version.Version,
@@ -163,8 +165,23 @@ func (s *Server) handleDoctor(w http.ResponseWriter, r *http.Request) {
 	if targetPath == "" {
 		targetPath = "."
 	}
+	w.Header().Set("Content-Type", "application/json")
 	reports := s.cfg.Doctor.InspectAll(r.Context(), targetPath)
 	_ = json.NewEncoder(w).Encode(reports)
+}
+
+func (s *Server) handleDoctorFix(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	fixer := doctor.NewFixer(s.cfg.Doctor, s.cfg.Supervisor, ".")
+	actions, updatedReports := fixer.FixAll(r.Context())
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"actions": actions,
+		"health":  updatedReports,
+	})
 }
 
 func (s *Server) handleDaemons(w http.ResponseWriter, r *http.Request) {
@@ -172,6 +189,7 @@ func (s *Server) handleDaemons(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
+	w.Header().Set("Content-Type", "application/json")
 	statuses := s.cfg.Supervisor.StatusAll(r.Context())
 	_ = json.NewEncoder(w).Encode(statuses)
 }
@@ -181,6 +199,8 @@ func (s *Server) handleDaemonAction(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
+
+	w.Header().Set("Content-Type", "application/json")
 
 	// Path format: /api/v1/daemons/{name}/{action}
 	parts := strings.Split(strings.Trim(r.URL.Path, "/"), "/")
@@ -349,4 +369,23 @@ func (s *Server) Stop(ctx context.Context) error {
 	}
 
 	return err
+}
+
+func (s *Server) handleRoot(w http.ResponseWriter, r *http.Request) {
+	if r.URL.Path != "/" {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]interface{}{
+		"service": "fabrial-control-plane",
+		"version": version.Version,
+		"endpoints": []string{
+			"/api/v1/health",
+			"/api/v1/doctor",
+			"/api/v1/doctor/fix",
+			"/api/v1/daemons",
+			"/api/v1/events",
+		},
+	})
 }

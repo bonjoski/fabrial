@@ -14,7 +14,6 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/bonjoski/airlock/pkg/secrets"
 	"github.com/bonjoski/fabrial/pkg/doctor"
 	"github.com/bonjoski/fabrial/pkg/router"
 )
@@ -67,9 +66,9 @@ func NewDefaultSupervisor() *Supervisor {
 			StartArgs:  []string{"daemon"},
 			PIDFile:    filepath.Join(home, ".locksmith", "locksmith.pid"),
 			LogFile:    filepath.Join(home, ".locksmith", "daemon.log"),
-			SocketPath: secrets.ResolveLocksmithSocket(),
+			SocketPath: doctor.ResolveLocksmithSocketPath(),
 			HealthProbe: func(ctx context.Context) bool {
-				sock := secrets.ResolveLocksmithSocket()
+				sock := doctor.ResolveLocksmithSocketPath()
 				conn, err := (&net.Dialer{}).DialContext(ctx, "unix", sock)
 				if err == nil {
 					_ = conn.Close()
@@ -476,4 +475,40 @@ func isProcessAlive(pid int) bool {
 	// Signal 0 tests process existence and permission
 	err := syscall.Kill(pid, 0)
 	return err == nil
+}
+
+// Start launches a service by name and implements doctor.DaemonManager.
+func (s *Supervisor) Start(ctx context.Context, name string) error {
+	def, ok := s.GetService(name)
+	if !ok {
+		return fmt.Errorf("unknown service: %s", name)
+	}
+	res := s.StartService(ctx, def)
+	if res.State == StateError {
+		return fmt.Errorf("%s", res.Message)
+	}
+	return nil
+}
+
+// Stop terminates a service by name and implements doctor.DaemonManager.
+func (s *Supervisor) Stop(ctx context.Context, name string) error {
+	def, ok := s.GetService(name)
+	if !ok {
+		return fmt.Errorf("unknown service: %s", name)
+	}
+	res := s.StopService(ctx, def)
+	if res.State == StateError {
+		return fmt.Errorf("%s", res.Message)
+	}
+	return nil
+}
+
+// Status queries a service by name and implements doctor.DaemonManager.
+func (s *Supervisor) Status(ctx context.Context, name string) (bool, string) {
+	def, ok := s.GetService(name)
+	if !ok {
+		return false, fmt.Sprintf("unknown service: %s", name)
+	}
+	st := s.QueryStatus(ctx, def)
+	return st.State == StateRunning, st.Message
 }

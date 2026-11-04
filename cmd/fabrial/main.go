@@ -4,12 +4,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
-	"os/exec"
 	"os/signal"
-	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
@@ -47,6 +46,9 @@ func main() {
 	case "doctor":
 		handleDoctor(args)
 
+	case "fix":
+		handleFix(args)
+
 	case "daemon":
 		handleDaemon(args)
 
@@ -58,9 +60,6 @@ func main() {
 
 	case "serve":
 		handleServe(args)
-
-	case "ui", "cockpit":
-		handleUI(args)
 
 	default:
 		// Direct shorthand: if first arg is a flag or executable, run it
@@ -75,10 +74,10 @@ Unifying Airlock, Locksmith, Aegisbox, and Argus into an end-to-end agentic runt
 Usage:
   fabrial run [flags] [--] <command> [args...]
   fabrial exec [flags] [--] <command> [args...]
-  fabrial doctor [--json]
+  fabrial doctor [--json] [--fix]
+  fabrial fix [pillar] [--json]
   fabrial daemon [status|start|stop|restart]
   fabrial serve [--socket <path>] [--port <port>]
-  fabrial ui
   fabrial integrate [superengineering] [path] [--global]
   fabrial version
 
@@ -158,10 +157,19 @@ func handleExec(args []string) {
 
 func handleDoctor(args []string) {
 	asJSON := false
+	doFix := false
 	for _, a := range args {
 		if a == "--json" {
 			asJSON = true
 		}
+		if a == "--fix" || a == "fix" {
+			doFix = true
+		}
+	}
+
+	if doFix {
+		handleFix(args)
+		return
 	}
 
 	inspector := doctor.NewInspector(1 * time.Second)
@@ -176,6 +184,61 @@ func handleDoctor(args []string) {
 	}
 
 	fmt.Println(doctor.FormatTable(results))
+}
+
+func handleFix(args []string) {
+	asJSON := false
+	var targetPillar string
+	for _, a := range args {
+		if a == "--json" {
+			asJSON = true
+		} else if a != "--fix" && a != "fix" && !strings.HasPrefix(a, "-") && targetPillar == "" {
+			targetPillar = a
+		}
+	}
+
+	inspector := doctor.NewInspector(1 * time.Second)
+	sup := supervisor.NewDefaultSupervisor()
+	fixer := doctor.NewFixer(inspector, sup, ".")
+
+	ctx := context.Background()
+
+	if targetPillar != "" {
+		fmt.Printf("💎 Remediating degraded fabric component: %s...\n", targetPillar)
+		actions, updatedReport := fixer.FixPillar(ctx, doctor.PillarID(targetPillar))
+		if asJSON {
+			out := map[string]interface{}{
+				"actions": actions,
+				"health":  updatedReport,
+			}
+			data, _ := json.MarshalIndent(out, "", "  ")
+			fmt.Println(string(data))
+			return
+		}
+
+		fmt.Println(doctor.FormatFixTable(actions))
+		fmt.Printf("✔ %-12s [%-8s] %s\n", updatedReport.Pillar, updatedReport.Status, updatedReport.Details)
+		return
+	}
+
+	fmt.Println("💎 Scanning and remediating degraded fabric components...")
+	actions, updatedReports := fixer.FixAll(ctx)
+
+	if asJSON {
+		out := map[string]interface{}{
+			"actions": actions,
+			"health":  updatedReports,
+		}
+		data, _ := json.MarshalIndent(out, "", "  ")
+		fmt.Println(string(data))
+		return
+	}
+
+	if len(actions) > 0 {
+		fmt.Println(doctor.FormatFixTable(actions))
+		fmt.Println("\nRe-evaluating fabric diagnostics...")
+	}
+	fmt.Println(doctor.FormatTable(updatedReports))
 }
 
 func handleDaemon(args []string) {
@@ -408,31 +471,4 @@ func handleServe(args []string) {
 	stopCtx, stopCancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer stopCancel()
 	_ = srv.Stop(stopCtx)
-}
-
-func handleUI(args []string) {
-	home, _ := os.UserHomeDir()
-	candidates := []string{
-		"fabrial-cockpit",
-		filepath.Join(home, ".local", "bin", "fabrial-cockpit"),
-		"/Applications/Fabrial Cockpit.app/Contents/MacOS/fabrial-cockpit",
-	}
-
-	for _, cand := range candidates {
-		if bin, err := router.FindExecutable(cand); err == nil && bin != "" {
-			fmt.Printf("💎 Launching Fabrial Cockpit companion (%s)...\n", bin)
-			cmd := exec.Command(bin, args...)
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			if err := cmd.Start(); err != nil {
-				fmt.Fprintf(os.Stderr, "failed to launch cockpit: %v\n", err)
-				os.Exit(1)
-			}
-			return
-		}
-	}
-
-	fmt.Println("💎 Fabrial Cockpit Companion is not installed on PATH.")
-	fmt.Println("   Starting headless control plane API instead at http://127.0.0.1:9191...")
-	handleServe(args)
 }

@@ -14,7 +14,6 @@ import (
 	"time"
 
 	airlockDoc "github.com/bonjoski/airlock/pkg/doctor"
-	"github.com/bonjoski/airlock/pkg/secrets"
 	"github.com/bonjoski/fabrial/pkg/router"
 )
 
@@ -168,7 +167,7 @@ func (in *Inspector) probeAirlock(ctx context.Context, projectDir string) Pillar
 
 func (in *Inspector) probeLocksmith(ctx context.Context, _ string) PillarHealth {
 	bin, binErr := router.FindExecutable("locksmith")
-	sock := secrets.ResolveLocksmithSocket()
+	sock := ResolveLocksmithSocketPath()
 
 	if _, err := os.Stat(sock); err == nil {
 		if ok, reason := VerifySocketSecurity(sock); !ok {
@@ -519,6 +518,17 @@ func FormatTable(results []PillarHealth) string {
 	}
 
 	sb.WriteString(strings.Repeat("─", 75))
+
+	hasDegraded := false
+	for _, r := range results {
+		if r.Status == StatusOffline || r.Status == StatusDegraded {
+			hasDegraded = true
+			break
+		}
+	}
+	if hasDegraded {
+		sb.WriteString("\n💡 Found degraded component(s). Run 'fabrial doctor --fix' (or 'fabrial fix') to automatically remediate.")
+	}
 	return sb.String()
 }
 
