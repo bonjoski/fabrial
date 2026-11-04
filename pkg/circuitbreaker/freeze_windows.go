@@ -7,6 +7,10 @@ import (
 	"os/exec"
 )
 
+func verifyProcessTarget(pid int) error {
+	return nil
+}
+
 func freezeProcessTree(pid int) (string, error) {
 	// Fallback to taskkill /PID on Windows or suspend
 	cmd := exec.Command("powershell", "-NoProfile", "-Command", fmt.Sprintf("Get-Process -Id %d | ForEach-Object { $_.Suspend() }", pid))

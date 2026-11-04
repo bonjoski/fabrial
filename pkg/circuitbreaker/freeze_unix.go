@@ -10,6 +10,20 @@ import (
 	"syscall"
 )
 
+func verifyProcessTarget(pid int) error {
+	err := syscall.Kill(pid, 0)
+	if err != nil {
+		if err == syscall.ESRCH {
+			return fmt.Errorf("process %d already exited (ESRCH)", pid)
+		}
+		if err == syscall.EPERM {
+			return fmt.Errorf("refusing to freeze process %d: belongs to another user or privileged system context (EPERM)", pid)
+		}
+		return err
+	}
+	return nil
+}
+
 func freezeProcessTree(pid int) (string, error) {
 	// 1. Check for Linux cgroup v2 freezer if available
 	cgroupPath := findLinuxCgroup(pid)

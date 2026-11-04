@@ -2,9 +2,12 @@ package session
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 )
+
+var validEnvKeyRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 // BuildEnvironment generates the ambient security environment map for an active session.
 func BuildEnvironment(sessionID SessionID, parentID SessionID, token string, proxyAddr string, caCertPath string) map[string]string {
@@ -41,7 +44,8 @@ func BuildEnvironment(sessionID SessionID, parentID SessionID, token string, pro
 	return env
 }
 
-// FormatShellExport converts an environment map into eval-safe POSIX shell export statements.
+// FormatShellExport converts an environment map into eval-safe POSIX shell export statements,
+// strictly rejecting illegal environment variable names and stripping shell metacharacters/newlines.
 func FormatShellExport(env map[string]string) string {
 	if len(env) == 0 {
 		return ""
@@ -49,13 +53,19 @@ func FormatShellExport(env map[string]string) string {
 
 	keys := make([]string, 0, len(env))
 	for k := range env {
-		keys = append(keys, k)
+		if validEnvKeyRegex.MatchString(k) {
+			keys = append(keys, k)
+		}
 	}
 	sort.Strings(keys)
 
 	var sb strings.Builder
 	for _, k := range keys {
 		v := env[k]
+		// Strictly strip null bytes and line breaks to prevent subshell/command smuggling
+		v = strings.ReplaceAll(v, "\x00", "")
+		v = strings.ReplaceAll(v, "\r", "")
+		v = strings.ReplaceAll(v, "\n", "")
 		// Sanitize value for shell export: replace single quotes with '\''
 		escapedVal := strings.ReplaceAll(v, "'", "'\\''")
 		sb.WriteString(fmt.Sprintf("export %s='%s'\n", k, escapedVal))

@@ -14,6 +14,7 @@ var (
 	ErrParentNotMaster     = errors.New("child session must be derived from a valid master session")
 	ErrBiometricFailed     = errors.New("biometric hardware pre-flight verification failed")
 	ErrMaxConcurrencyLimit = errors.New("maximum concurrent sessions limit exceeded")
+	ErrInvalidSubtaskID    = errors.New("invalid subtask ID (must be 1-128 alphanumeric, underscore or dash characters)")
 )
 
 // SessionID uniquely identifies an active session or subagent run.

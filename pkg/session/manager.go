@@ -14,7 +14,10 @@ import (
 	"time"
 )
 
-var validIDRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{8,128}$`)
+var (
+	validIDRegex      = regexp.MustCompile(`^[a-zA-Z0-9_-]{8,128}$`)
+	validSubtaskRegex = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,128}$`)
+)
 
 // BiometricVerifier verifies human/hardware biometric presence.
 type BiometricVerifier func(ctx context.Context, reason string) error
@@ -129,6 +132,10 @@ func (sm *SessionManager) BeginSession(ctx context.Context, cfg SessionConfig) (
 
 // DeriveChildSession mints an attenuated subagent token without prompting Touch ID.
 func (sm *SessionManager) DeriveChildSession(ctx context.Context, parentID SessionID, subtaskID string, requestedScopes []string) (*SessionGrant, error) {
+	if subtaskID != "" && !validSubtaskRegex.MatchString(subtaskID) {
+		return nil, fmt.Errorf("%w: %q", ErrInvalidSubtaskID, subtaskID)
+	}
+
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
@@ -321,19 +328,44 @@ func DefaultSessionFilePath() string {
 	return filepath.Join(home, ".fabrial", "sessions.json")
 }
 
-// SaveToFile persists active sessions to disk with 0600 permissions using atomic rename.
+// SaveToFile persists active sessions to disk with 0600 permissions using atomic rename and inter-process locking.
 func (sm *SessionManager) SaveToFile(path string) error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-
-	sm.pruneExpiredLocked()
-
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return err
 	}
 
+	lock, err := AcquireFileLock(path + ".lock")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Release() }()
+
+	// Read latest on-disk state and merge to prevent lost updates across parallel processes
+	diskSessions := make(map[SessionID]*SessionGrant)
+	if data, err := os.ReadFile(path); err == nil {
+		_ = json.Unmarshal(data, &diskSessions)
+	}
+
+	sm.mu.Lock()
+	sm.pruneExpiredLocked()
+
+	// Merge: add active on-disk sessions not yet in memory
+	now := time.Now()
+	for id, g := range diskSessions {
+		if !now.After(g.ExpiresAt) {
+			if _, exists := sm.sessions[id]; !exists {
+				sm.sessions[id] = g
+				if g.ParentID != "" {
+					sm.childrenByParent[g.ParentID] = append(sm.childrenByParent[g.ParentID], id)
+				}
+			}
+		}
+	}
+
 	data, err := json.MarshalIndent(sm.sessions, "", "  ")
+	sm.mu.Unlock()
+
 	if err != nil {
 		return err
 	}
@@ -346,10 +378,13 @@ func (sm *SessionManager) SaveToFile(path string) error {
 	return os.Rename(tmpFile, path)
 }
 
-// LoadFromFile loads sessions from disk, pruning expired ones.
+// LoadFromFile loads sessions from disk with inter-process locking, pruning expired ones.
 func (sm *SessionManager) LoadFromFile(path string) error {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+	lock, err := AcquireFileLock(path + ".lock")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = lock.Release() }()
 
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -363,6 +398,9 @@ func (sm *SessionManager) LoadFromFile(path string) error {
 	if err := json.Unmarshal(data, &loaded); err != nil {
 		return err
 	}
+
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
 
 	sm.sessions = make(map[SessionID]*SessionGrant)
 	sm.childrenByParent = make(map[SessionID][]SessionID)
