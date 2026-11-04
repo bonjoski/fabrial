@@ -20,12 +20,18 @@ import (
 // TripHook is a callback function invoked whenever the circuit breaker trips.
 type TripHook func(result *TripResult)
 
+// SessionInvalidator abstracts session teardown when a circuit breaker trips.
+type SessionInvalidator interface {
+	InvalidateSession(ctx context.Context, sessionID string) error
+}
+
 // TripwireOptions configures the circuit breaker tripwire listener.
 type TripwireOptions struct {
 	SocketPath      string
 	LocksmithSocket string
 	ConjoinerSocket string
 	ForensicDir     string
+	SessionManager  SessionInvalidator
 	OnTrip          TripHook
 }
 
@@ -42,6 +48,7 @@ type Tripwire struct {
 	trippedCount atomic.Int64
 	lastResult   *TripResult
 	hooks        []TripHook
+	sessionPIDs  map[string][]int
 }
 
 // NewTripwire creates a new circuit breaker tripwire instance.
@@ -56,6 +63,7 @@ func NewTripwire(opts ...TripwireOptions) *Tripwire {
 		opt.LocksmithSocket = opts[0].LocksmithSocket
 		opt.ConjoinerSocket = opts[0].ConjoinerSocket
 		opt.ForensicDir = opts[0].ForensicDir
+		opt.SessionManager = opts[0].SessionManager
 		opt.OnTrip = opts[0].OnTrip
 	}
 
@@ -65,8 +73,9 @@ func NewTripwire(opts ...TripwireOptions) *Tripwire {
 			LocksmithSocket: opt.LocksmithSocket,
 			ConjoinerSocket: opt.ConjoinerSocket,
 		}),
-		stopCh: make(chan struct{}),
-		hooks:  make([]TripHook, 0, 4),
+		stopCh:      make(chan struct{}),
+		hooks:       make([]TripHook, 0, 4),
+		sessionPIDs: make(map[string][]int),
 	}
 
 	if opt.OnTrip != nil {
@@ -81,6 +90,38 @@ func (tw *Tripwire) AddHook(hook TripHook) {
 	tw.mu.Lock()
 	defer tw.mu.Unlock()
 	tw.hooks = append(tw.hooks, hook)
+}
+
+// RegisterSessionPID binds a child process PID to a specific SessionID for targeted blast-radius isolation.
+func (tw *Tripwire) RegisterSessionPID(sessionID string, pid int) {
+	if sessionID == "" || pid <= 1 {
+		return
+	}
+	tw.mu.Lock()
+	defer tw.mu.Unlock()
+	tw.sessionPIDs[sessionID] = append(tw.sessionPIDs[sessionID], pid)
+}
+
+// UnregisterSessionPID removes a terminated PID from the session binding.
+func (tw *Tripwire) UnregisterSessionPID(sessionID string, pid int) {
+	if sessionID == "" || pid <= 1 {
+		return
+	}
+	tw.mu.Lock()
+	defer tw.mu.Unlock()
+	pids, exists := tw.sessionPIDs[sessionID]
+	if !exists {
+		return
+	}
+	for i, p := range pids {
+		if p == pid {
+			tw.sessionPIDs[sessionID] = append(pids[:i], pids[i+1:]...)
+			break
+		}
+	}
+	if len(tw.sessionPIDs[sessionID]) == 0 {
+		delete(tw.sessionPIDs, sessionID)
+	}
 }
 
 // Start begins listening on or connecting to argus.sock.
@@ -185,19 +226,44 @@ func (tw *Tripwire) Trip(alert *Alert) *TripResult {
 		Timestamp:  start,
 	}
 
-	// 1. Instant Process Freeze (<3ms target)
+	// 1. Instant Process Freeze (<3ms target) - Scoped to session PIDs and AgentPID
+	pidsToFreeze := make([]int, 0, 4)
 	if alert.AgentPID > 1 {
-		fr, err := Freeze(alert.AgentPID)
+		pidsToFreeze = append(pidsToFreeze, alert.AgentPID)
+	}
+
+	if alert.SessionID != "" {
+		tw.mu.Lock()
+		if sessionPIDs, ok := tw.sessionPIDs[alert.SessionID]; ok {
+			for _, pid := range sessionPIDs {
+				if pid > 1 && pid != alert.AgentPID {
+					pidsToFreeze = append(pidsToFreeze, pid)
+				}
+			}
+			delete(tw.sessionPIDs, alert.SessionID)
+		}
+		tw.mu.Unlock()
+	}
+
+	for _, pid := range pidsToFreeze {
+		fr, err := Freeze(pid)
 		res.FreezeLatency = time.Since(start)
 		if err != nil {
-			res.Error = fmt.Sprintf("freeze failed: %v", err)
+			if res.Error == "" {
+				res.Error = fmt.Sprintf("freeze pid %d failed: %v", pid, err)
+			}
 		} else {
 			res.Frozen = true
 			res.FreezeMethod = fr.Method
 		}
 	}
 
-	// 2. Session Revocation Hook (Locksmith & Conjoiner)
+	// 2. Session Invalidation Hook (Local SessionManager)
+	if alert.SessionID != "" && tw.opts.SessionManager != nil {
+		_ = tw.opts.SessionManager.InvalidateSession(context.Background(), alert.SessionID)
+	}
+
+	// 3. Remote Session Revocation Hook (Locksmith & Conjoiner)
 	revLocksmith, revConjoiner, errs := tw.revoker.Revoke(alert)
 	res.RevokedLocksmith = revLocksmith
 	res.RevokedConjoiner = revConjoiner

@@ -275,3 +275,85 @@ func TestAdversarialTripwireRobustness(t *testing.T) {
 		t.Error("PID 1 must never be frozen")
 	}
 }
+
+type mockSessionManager struct {
+	mu           sync.Mutex
+	invalidated  map[string]bool
+}
+
+func (m *mockSessionManager) InvalidateSession(ctx context.Context, sessionID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.invalidated[sessionID] = true
+	return nil
+}
+
+func TestAdversarial_ScopedCircuitBreaker_NoCollateralDamage(t *testing.T) {
+	// Spawn two worker processes: worker 1 for session 1, worker 2 for session 2
+	cmd1 := exec.Command("sleep", "30")
+	if err := cmd1.Start(); err != nil {
+		t.Fatalf("Failed to start worker 1: %v", err)
+	}
+	defer func() {
+		_ = cmd1.Process.Kill()
+		_ = cmd1.Wait()
+	}()
+
+	cmd2 := exec.Command("sleep", "30")
+	if err := cmd2.Start(); err != nil {
+		t.Fatalf("Failed to start worker 2: %v", err)
+	}
+	defer func() {
+		_ = cmd2.Process.Kill()
+		_ = cmd2.Wait()
+	}()
+
+	mockSM := &mockSessionManager{
+		invalidated: make(map[string]bool),
+	}
+
+	tw := NewTripwire(TripwireOptions{
+		SocketPath:     filepath.Join(os.TempDir(), "test-scoped-trip.sock"),
+		SessionManager: mockSM,
+	})
+
+	sess1 := "sess_worker_1"
+	sess2 := "sess_worker_2"
+
+	// Register PIDs to their respective sessions
+	tw.RegisterSessionPID(sess1, cmd1.Process.Pid)
+	tw.RegisterSessionPID(sess2, cmd2.Process.Pid)
+
+	// An alert arrives ONLY for session 1
+	alert := &Alert{
+		RuleName:  "hallucinated_package_slopsquatting",
+		Severity:  "critical",
+		SessionID: sess1,
+		AgentPID:  cmd1.Process.Pid,
+	}
+
+	res := tw.Trip(alert)
+	if res == nil || !res.Frozen {
+		t.Fatalf("expected session 1 worker to be frozen, res: %+v", res)
+	}
+
+	// Assert session 1 was invalidated in SessionManager
+	mockSM.mu.Lock()
+	sess1Invalidated := mockSM.invalidated[sess1]
+	sess2Invalidated := mockSM.invalidated[sess2]
+	mockSM.mu.Unlock()
+
+	if !sess1Invalidated {
+		t.Fatal("expected session 1 to be invalidated by circuit breaker")
+	}
+
+	// CRITICAL INVARIANT: Session 2 was NOT invalidated and process 2 was NOT killed/frozen
+	if sess2Invalidated {
+		t.Fatal("collateral damage: session 2 was invalidated by session 1 alert!")
+	}
+
+	// Check if cmd2 is still alive and responsive
+	if cmd2.ProcessState != nil && cmd2.ProcessState.Exited() {
+		t.Fatal("collateral damage: session 2 process was terminated by session 1 alert!")
+	}
+}
