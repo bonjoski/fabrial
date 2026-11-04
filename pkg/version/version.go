@@ -4,7 +4,7 @@ package version
 
 var (
 	// Version is the current semantic version of Fabrial.
-	Version = "0.5.1"
+	Version = "0.5.2"
 
 	// Commit is the git commit SHA injected at build time via -ldflags.
 	Commit = "dev"
