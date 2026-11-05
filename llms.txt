@@ -1,9 +1,10 @@
 # Fabrial
 
-> Sovereign AI Agent Security Fabric: Unifying Airlock, Locksmith, Aegisbox, and Argus into an integrated zero-trust runtime.
+> Sovereign AI agent security fabric and dynamic multi-tier router coordinating kernel sandboxing, hardware microVMs, and biometric credential injection.
 
 ## Core Capabilities
 - Dynamic Multi-Tier Command Routing: Evaluates commands via AST heuristics and `fabrial.yaml`, dispatching to Tier 1 (Airlock kernel sandbox, <15ms) or Tier 2 (Aegisbox microVM, ~100ms hardware boundary).
+- Ambient Session Broker: Zero-hop environment injection for frictionless agent routing.
 - Circuit Breaker Tripwire Bus: Listens on `~/.argus/argus.sock`; triggers process SIGKILL and dispatches credential revocation to Locksmith and Conjoiner on policy breach.
 - Health Probes: `fabrial doctor` validates kernel sandbox hooks, microVM sockets, and daemon states.
 
@@ -12,9 +13,10 @@
 - `fabrial run --dry-run -- <command>`: Evaluates and displays the routing tier decision without executing.
 - `fabrial doctor`: Verifies host security hooks and daemon sockets.
 - `fabrial vet`: Lints `fabrial.yaml` configuration.
+- `fabrial reset-circuit-breaker`: Clears tripwire lock after security event resolution.
 
 ## Key Sockets & Paths
 - Configuration: `fabrial.yaml`
 - Control Socket: `~/.fabrial/fabrial.sock`
 - Dependency Sockets: `~/.argus/argus.sock`, `~/.locksmith/locksmith.sock`, `~/.conjoiner/conjoiner.sock`, `~/.aegisbox/aegisboxd.sock`
-- Documentation: `docs/knowledge-base/01-fabrial.md` in repo `spanreed`
+- Parent Runbook: `docs/knowledge-base/01-fabrial.md` in repository `spanreed`
