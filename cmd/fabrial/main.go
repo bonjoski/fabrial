@@ -48,6 +48,12 @@ func main() {
 	case "queue":
 		handleQueue(args)
 
+	case "launch":
+		sessionFile := session.DefaultSessionFilePath()
+		sm := session.NewSessionManager()
+		_ = sm.LoadFromFile(sessionFile)
+		handleSessionLaunch(args, sm)
+
 	case "exec", "run":
 		handleExec(args)
 
@@ -80,7 +86,8 @@ func printUsage() {
 Ambient Session Broker, Multi-Agent Concurrency Coordinator & Scoped Security Fabric.
 
 Usage:
-  fabrial session [begin|child|env|list|kill] [flags]
+  fabrial launch [--profile agent] [--] <editor-or-agent> [args...]
+  fabrial session [begin|child|env|list|kill|launch] [flags]
   fabrial queue [status]
   fabrial exec [flags] [--] <command> [args...]
   fabrial run [flags] [--] <command> [args...]
@@ -517,6 +524,9 @@ func handleSession(args []string) {
 	_ = sm.LoadFromFile(sessionFile)
 
 	switch sub {
+	case "launch":
+		handleSessionLaunch(subArgs, sm)
+
 	case "begin", "start":
 		ttl := 30 * time.Minute
 		scopes := []string{"read", "build", "test", "lint"}
@@ -703,6 +713,62 @@ func handleSession(args []string) {
 
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown session subcommand: %s\n", sub)
+		os.Exit(1)
+	}
+}
+
+func handleSessionLaunch(args []string, sm *session.SessionManager) {
+	var targetCmd string
+	var targetArgs []string
+	profile := "agent"
+	useAirlock := true
+	biometric := false
+
+	for i := 0; i < len(args); i++ {
+		if args[i] == "--" {
+			if i+1 < len(args) {
+				targetCmd = args[i+1]
+				if i+2 < len(args) {
+					targetArgs = args[i+2:]
+				}
+			}
+			break
+		}
+		switch args[i] {
+		case "--profile":
+			if i+1 < len(args) {
+				profile = args[i+1]
+				i++
+			}
+		case "--no-airlock":
+			useAirlock = false
+		case "--bio":
+			biometric = true
+		default:
+			if targetCmd == "" {
+				targetCmd = args[i]
+				targetArgs = args[i+1:]
+				i = len(args)
+			}
+		}
+	}
+
+	if targetCmd == "" {
+		fmt.Fprintf(os.Stderr, "Usage: fabrial launch [--profile <profile>] [--no-airlock] [--] <command> [args...]\n")
+		os.Exit(1)
+	}
+
+	cfg := session.LaunchConfig{
+		Profile:       profile,
+		TargetCommand: targetCmd,
+		TargetArgs:    targetArgs,
+		UseAirlock:    useAirlock,
+		Biometric:     biometric,
+	}
+
+	ctx := context.Background()
+	if err := session.LaunchSession(ctx, sm, cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "Error launching session: %v\n", err)
 		os.Exit(1)
 	}
 }
