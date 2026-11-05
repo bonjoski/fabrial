@@ -1,6 +1,5 @@
 # Claude Code Guidelines for `fabrial`
 
-> **Authoritative Ecosystem Runbook:** [`spanreed/docs/knowledge-base/01-fabrial.md`](file:///Users/benskolmoski/code/spanreed/docs/knowledge-base/01-fabrial.md)
 
 ## Build & Test Commands
 - **Build Binary:** `go build -o bin/fabrial ./cmd/fabrial`

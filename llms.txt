@@ -19,4 +19,4 @@
 - Configuration: `fabrial.yaml`
 - Control Socket: `~/.fabrial/fabrial.sock`
 - Dependency Sockets: `~/.argus/argus.sock`, `~/.locksmith/locksmith.sock`, `~/.conjoiner/conjoiner.sock`, `~/.aegisbox/aegisboxd.sock`
-- Parent Runbook: `docs/knowledge-base/01-fabrial.md` in repository `spanreed`
+- Documentation: README.md & AGENTS.md

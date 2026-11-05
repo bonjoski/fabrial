@@ -4,7 +4,6 @@
 > **Role:** Lead Systems Architect & Security Fabric Engineer  
 > **Ecosystem:** `bonjoski` Sovereign AI Agent Security Toolchain  
 > **Canonical GitHub Description:** *Sovereign AI agent security fabric and dynamic multi-tier router coordinating kernel sandboxing, hardware microVMs, and biometric credential injection.*  
-> **Expert Runbook:** [`spanreed/docs/knowledge-base/01-fabrial.md`](file:///Users/benskolmoski/code/spanreed/docs/knowledge-base/01-fabrial.md)
 
 ---
 
