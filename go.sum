@@ -1,5 +1,7 @@
-github.com/bonjoski/airlock v0.7.0 h1:k9VyWcF8wnf+iAYCPFVofXJE8vP/TpkUK+A3Obdvs38=
-github.com/bonjoski/airlock v0.7.0/go.mod h1:CrGChNSf3U7Ptmjx1ePHbPeinZBeMBt9pMzBufudTBo=
+github.com/bonjoski/airlock v0.10.1 h1:NwG/J3Lt2WmIIvAqr4O0r+TkgxF47kdpC3TyN5V4gZs=
+github.com/bonjoski/airlock v0.10.1/go.mod h1:HO47iFZd5m6+12A1unprqi6e0M4GTQdMw4A1VtlOrpI=
+github.com/bonjoski/shield v0.1.0 h1:XnvwArIVkcHQg3rb/SYT4Z2O1iT5L465d+JmXvcUKwU=
+github.com/bonjoski/shield v0.1.0/go.mod h1:VWm7DEsydjtT18AsbJ0cg7I0OBOUZsIBUqAGWRNuoXE=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405 h1:yhCVgyC4o1eVCa2tZl7eS0r+SDo693bJlVdllGtEeKM=
 gopkg.in/check.v1 v0.0.0-20161208181325-20d25e280405/go.mod h1:Co6ibVJAznAaIkqp8huTwlJQCZ016jof/cbN4VW5Yz0=
 gopkg.in/yaml.v3 v3.0.1 h1:fxVm/GzAzEWqLHuvctI91KS9hhNmmWOoWu0XTYJS7CA=

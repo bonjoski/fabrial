@@ -60,6 +60,10 @@ func main() {
 	case "doctor":
 		handleDoctor(args)
 
+	case "status":
+		handleDaemon([]string{"status"})
+		os.Exit(0)
+
 	case "fix":
 		handleFix(args)
 
