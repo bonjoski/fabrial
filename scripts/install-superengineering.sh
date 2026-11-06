@@ -48,7 +48,7 @@ if [ "$IS_GLOBAL" = true ]; then
     echo "  → Configuring global App Settings via 'sc' CLI (applies to ALL workspaces)..."
     sc commands create "fabrial-doctor" --command "fabrial doctor --fix" --provider none --scope global --icon "💎" >/dev/null 2>&1 || true
     sc commands create "argus-audit" --command "argus vet --diff" --provider none --scope global --icon "👁️" >/dev/null 2>&1 || true
-    sc commands create "airlock-status" --command "airlock doctor --fix" --provider none --scope global --icon "🔒" >/dev/null 2>&1 || true
+    sc commands create "airlock-status" --command "airlock doctor" --provider none --scope global --icon "🔒" >/dev/null 2>&1 || true
     sc commands create "shield-status" --command "shield status" --provider none --scope global --icon "🛡️" >/dev/null 2>&1 || true
     sc commands create "conjoiner-check" --command "fabrial session list" --provider none --scope global --icon "🔗" >/dev/null 2>&1 || true
     sc commands create "stormcage-scan" --command "stormcage scan" --provider none --scope global --icon "⚡" >/dev/null 2>&1 || true
@@ -99,7 +99,7 @@ existing_names = {c.get('name') for c in cmds}
 defaults = [
     {'name': 'fabrial-doctor', 'command': 'fabrial doctor --fix', 'provider_preset_key': 'none', 'icon': '💎'},
     {'name': 'argus-audit', 'command': 'argus vet --diff', 'provider_preset_key': 'none', 'icon': '👁️'},
-    {'name': 'airlock-status', 'command': 'airlock doctor --fix', 'provider_preset_key': 'none', 'icon': '🔒'},
+    {'name': 'airlock-status', 'command': 'airlock doctor', 'provider_preset_key': 'none', 'icon': '🔒'},
     {'name': 'shield-status', 'command': 'shield status', 'provider_preset_key': 'none', 'icon': '🛡️'},
     {'name': 'conjoiner-check', 'command': 'fabrial session list', 'provider_preset_key': 'none', 'icon': '🔗'},
     {'name': 'stormcage-scan', 'command': 'stormcage scan', 'provider_preset_key': 'none', 'icon': '⚡'},

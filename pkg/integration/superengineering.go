@@ -75,7 +75,7 @@ func DefaultCommands() []CustomCommand {
 		{
 			ID:                generateUUID(),
 			Name:              "airlock-status",
-			Command:           "airlock doctor --fix",
+			Command:           "airlock doctor",
 			DispatchMode:      "inject_current_chat",
 			ViewPreference:    "default",
 			ProviderPresetKey: "none",

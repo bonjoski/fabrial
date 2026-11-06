@@ -33,13 +33,13 @@ func TestDefaultCommands(t *testing.T) {
 		t.Errorf("expected fabrial-doctor command to be 'fabrial doctor --fix', got %q", fabrial.Command)
 	}
 
-	// Verify airlock-status uses airlock doctor --fix
+	// Verify airlock-status uses airlock doctor
 	airlock, ok := cmdMap["airlock-status"]
 	if !ok {
 		t.Fatal("airlock-status command missing")
 	}
-	if airlock.Command != "airlock doctor --fix" {
-		t.Errorf("expected airlock-status command to be 'airlock doctor --fix', got %q", airlock.Command)
+	if airlock.Command != "airlock doctor" {
+		t.Errorf("expected airlock-status command to be 'airlock doctor', got %q", airlock.Command)
 	}
 
 	// Verify argus-audit uses argus vet --diff
@@ -134,8 +134,8 @@ func TestSuperEngineering_FreshDirectory(t *testing.T) {
 		cmdMap[m["name"].(string)] = m
 	}
 
-	if airlock, ok := cmdMap["airlock-status"]; !ok || airlock["command"] != "airlock doctor --fix" {
-		t.Errorf("expected airlock-status to have command 'airlock doctor --fix', got %v", airlock["command"])
+	if airlock, ok := cmdMap["airlock-status"]; !ok || airlock["command"] != "airlock doctor" {
+		t.Errorf("expected airlock-status to have command 'airlock doctor', got %v", airlock["command"])
 	}
 	if argus, ok := cmdMap["argus-audit"]; !ok || argus["command"] != "argus vet --diff" {
 		t.Errorf("expected argus-audit to have command 'argus vet --diff', got %v", argus["command"])
@@ -257,8 +257,8 @@ func TestSuperEngineering_UpdatesExistingCommandAndPreservesID(t *testing.T) {
 	if airlock["id"] != "existing-airlock-uuid-1111" {
 		t.Errorf("expected ID 'existing-airlock-uuid-1111' to be preserved, got %v", airlock["id"])
 	}
-	if airlock["command"] != "airlock doctor --fix" {
-		t.Errorf("expected command to be updated to 'airlock doctor --fix', got %v", airlock["command"])
+	if airlock["command"] != "airlock doctor" {
+		t.Errorf("expected command to be updated to 'airlock doctor', got %v", airlock["command"])
 	}
 
 	// argus-audit: ID preserved, command updated
@@ -369,8 +369,8 @@ func TestSuperEngineering_Deduplication(t *testing.T) {
 	if cmdMap["airlock-status"]["id"] != "dup-airlock-1" {
 		t.Errorf("expected 'dup-airlock-1' to be preserved, got %v", cmdMap["airlock-status"]["id"])
 	}
-	if cmdMap["airlock-status"]["command"] != "airlock doctor --fix" {
-		t.Errorf("expected airlock-status to be updated to 'airlock doctor --fix', got %v", cmdMap["airlock-status"]["command"])
+	if cmdMap["airlock-status"]["command"] != "airlock doctor" {
+		t.Errorf("expected airlock-status to be updated to 'airlock doctor', got %v", cmdMap["airlock-status"]["command"])
 	}
 }
 
