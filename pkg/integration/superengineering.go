@@ -41,11 +41,12 @@ type CustomCommand struct {
 
 // Result describes the actions performed during integration.
 type Result struct {
-	ConfigPath     string   `json:"config_path"`
-	Created        bool     `json:"created"`
-	SetupAdded     []string `json:"setup_added"`
-	RunAdded       []string `json:"run_added"`
-	CommandsAdded  []string `json:"commands_added"`
+	ConfigPath      string   `json:"config_path"`
+	Created         bool     `json:"created"`
+	SetupAdded      []string `json:"setup_added"`
+	RunAdded        []string `json:"run_added"`
+	CommandsAdded   []string `json:"commands_added"`
+	CommandsUpdated []string `json:"commands_updated,omitempty"`
 }
 
 // DefaultCommands returns the canonical Bonjoski security commands for super.engineering.
@@ -64,7 +65,7 @@ func DefaultCommands() []CustomCommand {
 		{
 			ID:                generateUUID(),
 			Name:              "argus-audit",
-			Command:           "argus scan .",
+			Command:           "argus daemon status",
 			DispatchMode:      "inject_current_chat",
 			ViewPreference:    "default",
 			ProviderPresetKey: "none",
@@ -74,7 +75,7 @@ func DefaultCommands() []CustomCommand {
 		{
 			ID:                generateUUID(),
 			Name:              "airlock-status",
-			Command:           "airlock status",
+			Command:           "airlock doctor",
 			DispatchMode:      "inject_current_chat",
 			ViewPreference:    "default",
 			ProviderPresetKey: "none",
@@ -114,7 +115,7 @@ func DefaultCommands() []CustomCommand {
 		{
 			ID:                generateUUID(),
 			Name:              "soulcaster-verify",
-			Command:           "soulcaster verify",
+			Command:           "soulcaster version",
 			DispatchMode:      "inject_current_chat",
 			ViewPreference:    "default",
 			ProviderPresetKey: "none",
@@ -230,32 +231,86 @@ func SuperEngineering(targetDir string) (*Result, error) {
 		}
 	}
 
-	existingCmdNames := make(map[string]bool)
+	// Deduplicate existing commands by name, preserving the first occurrence.
+	// Commands without a name are preserved.
+	var dedupedList []map[string]interface{}
+	existingByName := make(map[string]map[string]interface{})
 	for _, c := range cmdList {
-		if name, ok := c["name"].(string); ok {
-			existingCmdNames[name] = true
+		name, ok := c["name"].(string)
+		if !ok || name == "" {
+			dedupedList = append(dedupedList, c)
+			continue
 		}
+		if _, seen := existingByName[name]; seen {
+			// Duplicate command with same name: drop subsequent occurrences
+			continue
+		}
+		existingByName[name] = c
+		dedupedList = append(dedupedList, c)
 	}
 
+	// Sync default commands: update existing in-place (preserving ID) or append new
 	for _, def := range DefaultCommands() {
-		if !existingCmdNames[def.Name] {
+		if existing, exists := existingByName[def.Name]; exists {
+			var updated bool
+			if c, ok := existing["command"].(string); !ok || c != def.Command {
+				existing["command"] = def.Command
+				updated = true
+			}
+			if dm, ok := existing["dispatch_mode"].(string); !ok || dm != def.DispatchMode {
+				existing["dispatch_mode"] = def.DispatchMode
+				updated = true
+			}
+			if vp, ok := existing["view_preference"].(string); !ok || vp != def.ViewPreference {
+				existing["view_preference"] = def.ViewPreference
+				updated = true
+			}
+			if icon, ok := existing["icon"].(string); !ok || icon != def.Icon {
+				existing["icon"] = def.Icon
+				updated = true
+			}
+			if as, ok := existing["auto_submit"].(bool); !ok || as != def.AutoSubmit {
+				existing["auto_submit"] = def.AutoSubmit
+				updated = true
+			}
+			if def.ProviderPresetKey != "" {
+				if pk, ok := existing["provider_preset_key"].(string); !ok || pk != def.ProviderPresetKey {
+					existing["provider_preset_key"] = def.ProviderPresetKey
+					updated = true
+				}
+			} else {
+				if _, hasKey := existing["provider_preset_key"]; hasKey {
+					delete(existing, "provider_preset_key")
+					updated = true
+				}
+			}
+			// Preserve ID if non-empty; if missing/empty set to def.ID
+			if id, ok := existing["id"].(string); !ok || id == "" {
+				existing["id"] = def.ID
+				updated = true
+			}
+			if updated {
+				result.CommandsUpdated = append(result.CommandsUpdated, def.Name)
+			}
+		} else {
 			cmdMap := map[string]interface{}{
-				"id":                  def.ID,
-				"name":                def.Name,
-				"command":             def.Command,
-				"dispatch_mode":       def.DispatchMode,
-				"view_preference":     def.ViewPreference,
-				"icon":                def.Icon,
-				"auto_submit":         def.AutoSubmit,
+				"id":              def.ID,
+				"name":            def.Name,
+				"command":         def.Command,
+				"dispatch_mode":   def.DispatchMode,
+				"view_preference": def.ViewPreference,
+				"icon":            def.Icon,
+				"auto_submit":     def.AutoSubmit,
 			}
 			if def.ProviderPresetKey != "" {
 				cmdMap["provider_preset_key"] = def.ProviderPresetKey
 			}
-			cmdList = append(cmdList, cmdMap)
+			dedupedList = append(dedupedList, cmdMap)
+			existingByName[def.Name] = cmdMap
 			result.CommandsAdded = append(result.CommandsAdded, def.Name)
 		}
 	}
-	rawMap["commands"] = cmdList
+	rawMap["commands"] = dedupedList
 
 	// Write atomically
 	if err := os.MkdirAll(configDir, 0755); err != nil {
@@ -292,26 +347,87 @@ func SuperEngineeringGlobal() (*Result, error) {
 		ConfigPath: "super.engineering App Settings (global)",
 	}
 
-	// 1. Get existing global commands to ensure idempotency
+	type scCmdInfo struct {
+		ID         string `json:"id"`
+		Name       string `json:"name"`
+		Command    string `json:"command"`
+		Dispatch   string `json:"dispatch"`
+		View       string `json:"view"`
+		Provider   string `json:"provider"`
+		Icon       string `json:"icon"`
+		AutoSubmit bool   `json:"auto_submit"`
+	}
+
+	// 1. Get existing global commands to ensure idempotency and deduplication
 	listCmd := exec.Command(scPath, "commands", "list", "--scope", "global", "--json")
 	out, err := listCmd.Output()
-	existingNames := make(map[string]bool)
+	existingByName := make(map[string][]scCmdInfo)
 	if err == nil {
 		var listResp struct {
-			Commands []struct {
-				Name string `json:"name"`
-			} `json:"commands"`
+			Commands []scCmdInfo `json:"commands"`
+			Response struct {
+				Commands []scCmdInfo `json:"commands"`
+			} `json:"response"`
 		}
 		if err := json.Unmarshal(out, &listResp); err == nil {
-			for _, c := range listResp.Commands {
-				existingNames[c.Name] = true
+			cmds := listResp.Commands
+			if len(cmds) == 0 && len(listResp.Response.Commands) > 0 {
+				cmds = listResp.Response.Commands
+			}
+			for _, c := range cmds {
+				if c.Name != "" {
+					existingByName[c.Name] = append(existingByName[c.Name], c)
+				}
 			}
 		}
 	}
 
-	// 2. Register global commands
+	// 2. Deduplicate existing global commands if duplicate commands with the same name exist
+	for name, entries := range existingByName {
+		if len(entries) > 1 {
+			// Keep entries[0], delete entries[1:]
+			for _, dup := range entries[1:] {
+				if dup.ID != "" {
+					_ = exec.Command(scPath, "commands", "delete", dup.ID, "--scope", "global").Run()
+				}
+			}
+			existingByName[name] = entries[:1]
+		}
+	}
+
+	// 3. Register or update global commands matching by name
 	for _, def := range DefaultCommands() {
-		if !existingNames[def.Name] {
+		entries, exists := existingByName[def.Name]
+		if exists && len(entries) > 0 {
+			primary := entries[0]
+			needsUpdate := primary.Command != def.Command ||
+				(def.Icon != "" && primary.Icon != def.Icon) ||
+				(def.ProviderPresetKey != "" && primary.Provider != def.ProviderPresetKey) ||
+				primary.AutoSubmit != def.AutoSubmit
+
+			if needsUpdate {
+				updateArgs := []string{"commands", "update", primary.ID, "--scope", "global", "--command", def.Command}
+				if def.ProviderPresetKey != "" {
+					updateArgs = append(updateArgs, "--provider", def.ProviderPresetKey)
+				} else if primary.Provider != "" {
+					updateArgs = append(updateArgs, "--clear-provider")
+				}
+				if def.Icon != "" {
+					updateArgs = append(updateArgs, "--icon", def.Icon)
+				} else if primary.Icon != "" {
+					updateArgs = append(updateArgs, "--clear-icon")
+				}
+				if def.AutoSubmit {
+					updateArgs = append(updateArgs, "--auto-submit")
+				} else {
+					updateArgs = append(updateArgs, "--no-auto-submit")
+				}
+				cmd := exec.Command(scPath, updateArgs...)
+				if err := cmd.Run(); err == nil {
+					result.CommandsUpdated = append(result.CommandsUpdated, def.Name)
+				}
+			}
+		} else {
 			args := []string{"commands", "create", def.Name, "--command", def.Command, "--scope", "global"}
 			if def.ProviderPresetKey != "" {
 				args = append(args, "--provider", def.ProviderPresetKey)

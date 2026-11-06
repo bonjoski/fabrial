@@ -47,8 +47,8 @@ if [ "$IS_GLOBAL" = true ]; then
     fi
     echo "  → Configuring global App Settings via 'sc' CLI (applies to ALL workspaces)..."
     sc commands create "fabrial-doctor" --command "fabrial doctor" --provider none --scope global --icon "💎" >/dev/null 2>&1 || true
-    sc commands create "argus-audit" --command "argus scan ." --provider none --scope global --icon "👁️" >/dev/null 2>&1 || true
-    sc commands create "airlock-status" --command "airlock status" --provider none --scope global --icon "🔒" >/dev/null 2>&1 || true
+    sc commands create "argus-audit" --command "argus daemon status" --provider none --scope global --icon "👁️" >/dev/null 2>&1 || true
+    sc commands create "airlock-status" --command "airlock doctor" --provider none --scope global --icon "🔒" >/dev/null 2>&1 || true
     sc commands create "shield-status" --command "shield status" --provider none --scope global --icon "🛡️" >/dev/null 2>&1 || true
     sc commands create "conjoiner-check" --command "conjoiner version" --provider none --scope global --icon "🔗" >/dev/null 2>&1 || true
     sc commands create "stormcage-scan" --command "stormcage scan" --provider none --scope global --icon "⚡" >/dev/null 2>&1 || true
@@ -99,8 +99,8 @@ existing_names = {c.get('name') for c in cmds}
 
 defaults = [
     {'name': 'fabrial-doctor', 'command': 'fabrial doctor', 'provider_preset_key': 'none', 'icon': '💎'},
-    {'name': 'argus-audit', 'command': 'argus scan .', 'provider_preset_key': 'none', 'icon': '👁️'},
-    {'name': 'airlock-status', 'command': 'airlock status', 'provider_preset_key': 'none', 'icon': '🔒'},
+    {'name': 'argus-audit', 'command': 'argus daemon status', 'provider_preset_key': 'none', 'icon': '👁️'},
+    {'name': 'airlock-status', 'command': 'airlock doctor', 'provider_preset_key': 'none', 'icon': '🔒'},
     {'name': 'shield-status', 'command': 'shield status', 'provider_preset_key': 'none', 'icon': '🛡️'},
     {'name': 'conjoiner-check', 'command': 'conjoiner version', 'provider_preset_key': 'none', 'icon': '🔗'},
     {'name': 'stormcage-scan', 'command': 'stormcage scan', 'provider_preset_key': 'none', 'icon': '⚡'},

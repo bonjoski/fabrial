@@ -401,6 +401,8 @@ func handleIntegrate(args []string) {
 		switch arg {
 		case "superengineering", "super.engineering", "--superengineering", "-s":
 			targetPlatform = "superengineering"
+		case "antigravity", "agy", "--antigravity", "-a":
+			targetPlatform = "antigravity"
 		case "--global", "-g":
 			isGlobal = true
 		case "help", "-h", "--help":
@@ -411,7 +413,8 @@ Options:
   --global, -g        Install globally into App Settings across ALL paths/workspaces
 
 Supported targets:
-  superengineering    Generate/update .super.engineering/config.json with hooks and commands`)
+  superengineering    Generate/update .super.engineering/config.json with hooks and commands
+  antigravity, agy    Configure native MCP servers (aegisbox, locksmith, airlock) in mcp_config.json`)
 			os.Exit(0)
 		default:
 			if !strings.HasPrefix(arg, "-") {
@@ -442,8 +445,26 @@ Supported targets:
 		}
 		if len(res.CommandsAdded) > 0 {
 			fmt.Printf("  • Slash commands configured: %s\n", strings.Join(res.CommandsAdded, ", "))
-		} else {
+		} else if len(res.CommandsUpdated) == 0 {
 			fmt.Printf("  • All commands already configured (idempotent)\n")
+		}
+		if len(res.CommandsUpdated) > 0 {
+			fmt.Printf("  • Slash commands updated: %s\n", strings.Join(res.CommandsUpdated, ", "))
+		}
+	case "antigravity", "agy":
+		res, err := integration.Antigravity(targetDir, isGlobal)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error: Antigravity integration failed: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("💎 Integrated Bonjoski Security MCP Servers into Antigravity (%s)\n", res.ConfigPath)
+		if len(res.ServersAdded) > 0 {
+			fmt.Printf("  • MCP servers added: %s\n", strings.Join(res.ServersAdded, ", "))
+		} else if len(res.ServersUpdated) == 0 {
+			fmt.Printf("  • All MCP servers already configured (idempotent)\n")
+		}
+		if len(res.ServersUpdated) > 0 {
+			fmt.Printf("  • MCP servers updated: %s\n", strings.Join(res.ServersUpdated, ", "))
 		}
 	default:
 		fmt.Fprintf(os.Stderr, "Unknown integration target: %s\n", targetPlatform)
