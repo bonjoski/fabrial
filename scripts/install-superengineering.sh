@@ -46,16 +46,15 @@ if [ "$IS_GLOBAL" = true ]; then
         exit 1
     fi
     echo "  → Configuring global App Settings via 'sc' CLI (applies to ALL workspaces)..."
-    sc commands create "fabrial-doctor" --command "fabrial doctor" --provider none --scope global --icon "💎" >/dev/null 2>&1 || true
-    sc commands create "argus-audit" --command "argus daemon status" --provider none --scope global --icon "👁️" >/dev/null 2>&1 || true
-    sc commands create "airlock-status" --command "airlock doctor" --provider none --scope global --icon "🔒" >/dev/null 2>&1 || true
+    sc commands create "fabrial-doctor" --command "fabrial doctor --fix" --provider none --scope global --icon "💎" >/dev/null 2>&1 || true
+    sc commands create "argus-audit" --command "argus vet --diff" --provider none --scope global --icon "👁️" >/dev/null 2>&1 || true
+    sc commands create "airlock-status" --command "airlock doctor --fix" --provider none --scope global --icon "🔒" >/dev/null 2>&1 || true
     sc commands create "shield-status" --command "shield status" --provider none --scope global --icon "🛡️" >/dev/null 2>&1 || true
-    sc commands create "conjoiner-check" --command "conjoiner version" --provider none --scope global --icon "🔗" >/dev/null 2>&1 || true
+    sc commands create "conjoiner-check" --command "fabrial session list" --provider none --scope global --icon "🔗" >/dev/null 2>&1 || true
     sc commands create "stormcage-scan" --command "stormcage scan" --provider none --scope global --icon "⚡" >/dev/null 2>&1 || true
-    sc commands create "soulcaster-verify" --command "soulcaster verify" --provider none --scope global --icon "🔮" >/dev/null 2>&1 || true
+    sc commands create "soulcaster-verify" --command "soulcaster verify-patch -base HEAD" --provider none --scope global --icon "🔮" >/dev/null 2>&1 || true
     sc commands create "bomhound-enrich" --command "bomhound ." --provider none --scope global --icon "🐾" >/dev/null 2>&1 || true
-    sc commands create "security-audit" --command "Run an adversarial security review on recent changes using the adversarial-sentinel guidelines, checking for sandbox escapes, secrets leakage, and fail-open vulnerabilities." --scope global --icon "⚔️" >/dev/null 2>&1 || true
-    sc project scripts set setup "fabrial doctor" --scope user >/dev/null 2>&1 || true
+    sc project scripts set setup "fabrial doctor --fix" --scope user >/dev/null 2>&1 || true
     sc project scripts set run shield "shield proxy --addr 127.0.0.1:8443 --tls" --scope user >/dev/null 2>&1 || true
     echo "✔ Successfully configured global App Settings for all paths and workspaces."
     exit 0
@@ -98,15 +97,14 @@ cmds = cfg.get('commands', [])
 existing_names = {c.get('name') for c in cmds}
 
 defaults = [
-    {'name': 'fabrial-doctor', 'command': 'fabrial doctor', 'provider_preset_key': 'none', 'icon': '💎'},
-    {'name': 'argus-audit', 'command': 'argus daemon status', 'provider_preset_key': 'none', 'icon': '👁️'},
-    {'name': 'airlock-status', 'command': 'airlock doctor', 'provider_preset_key': 'none', 'icon': '🔒'},
+    {'name': 'fabrial-doctor', 'command': 'fabrial doctor --fix', 'provider_preset_key': 'none', 'icon': '💎'},
+    {'name': 'argus-audit', 'command': 'argus vet --diff', 'provider_preset_key': 'none', 'icon': '👁️'},
+    {'name': 'airlock-status', 'command': 'airlock doctor --fix', 'provider_preset_key': 'none', 'icon': '🔒'},
     {'name': 'shield-status', 'command': 'shield status', 'provider_preset_key': 'none', 'icon': '🛡️'},
-    {'name': 'conjoiner-check', 'command': 'conjoiner version', 'provider_preset_key': 'none', 'icon': '🔗'},
+    {'name': 'conjoiner-check', 'command': 'fabrial session list', 'provider_preset_key': 'none', 'icon': '🔗'},
     {'name': 'stormcage-scan', 'command': 'stormcage scan', 'provider_preset_key': 'none', 'icon': '⚡'},
-    {'name': 'soulcaster-verify', 'command': 'soulcaster verify', 'provider_preset_key': 'none', 'icon': '🔮'},
+    {'name': 'soulcaster-verify', 'command': 'soulcaster verify-patch -base HEAD', 'provider_preset_key': 'none', 'icon': '🔮'},
     {'name': 'bomhound-enrich', 'command': 'bomhound .', 'provider_preset_key': 'none', 'icon': '🐾'},
-    {'name': 'security-audit', 'command': 'Run an adversarial security review on recent changes using the adversarial-sentinel guidelines, checking for sandbox escapes, secrets leakage, and fail-open vulnerabilities.', 'icon': '⚔️'},
 ]
 
 for d in defaults:

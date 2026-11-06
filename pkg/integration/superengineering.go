@@ -55,7 +55,7 @@ func DefaultCommands() []CustomCommand {
 		{
 			ID:                generateUUID(),
 			Name:              "fabrial-doctor",
-			Command:           "fabrial doctor",
+			Command:           "fabrial doctor --fix",
 			DispatchMode:      "inject_current_chat",
 			ViewPreference:    "default",
 			ProviderPresetKey: "none",
@@ -65,7 +65,7 @@ func DefaultCommands() []CustomCommand {
 		{
 			ID:                generateUUID(),
 			Name:              "argus-audit",
-			Command:           "argus daemon status",
+			Command:           "argus vet --diff",
 			DispatchMode:      "inject_current_chat",
 			ViewPreference:    "default",
 			ProviderPresetKey: "none",
@@ -75,7 +75,7 @@ func DefaultCommands() []CustomCommand {
 		{
 			ID:                generateUUID(),
 			Name:              "airlock-status",
-			Command:           "airlock doctor",
+			Command:           "airlock doctor --fix",
 			DispatchMode:      "inject_current_chat",
 			ViewPreference:    "default",
 			ProviderPresetKey: "none",
@@ -95,7 +95,7 @@ func DefaultCommands() []CustomCommand {
 		{
 			ID:                generateUUID(),
 			Name:              "conjoiner-check",
-			Command:           "conjoiner version",
+			Command:           "fabrial session list",
 			DispatchMode:      "inject_current_chat",
 			ViewPreference:    "default",
 			ProviderPresetKey: "none",
@@ -115,7 +115,7 @@ func DefaultCommands() []CustomCommand {
 		{
 			ID:                generateUUID(),
 			Name:              "soulcaster-verify",
-			Command:           "soulcaster version",
+			Command:           "soulcaster verify-patch -base HEAD",
 			DispatchMode:      "inject_current_chat",
 			ViewPreference:    "default",
 			ProviderPresetKey: "none",
@@ -130,15 +130,6 @@ func DefaultCommands() []CustomCommand {
 			ViewPreference:    "default",
 			ProviderPresetKey: "none",
 			Icon:              "🐾",
-			AutoSubmit:        true,
-		},
-		{
-			ID:                generateUUID(),
-			Name:              "security-audit",
-			Command:           "Run an adversarial security review on recent changes using the adversarial-sentinel guidelines, checking for sandbox escapes, secrets leakage, and fail-open vulnerabilities.",
-			DispatchMode:      "inject_current_chat",
-			ViewPreference:    "default",
-			Icon:              "⚔️",
 			AutoSubmit:        true,
 		},
 	}
