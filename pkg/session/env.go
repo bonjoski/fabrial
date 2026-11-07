@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/bonjoski/stoneward/pkg/client"
 )
 
 var validEnvKeyRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
@@ -39,6 +41,17 @@ func BuildEnvironment(sessionID SessionID, parentID SessionID, token string, pro
 	if caCertPath != "" {
 		env["SSL_CERT_FILE"] = caCertPath
 		env["NODE_EXTRA_CA_CERTS"] = caCertPath
+	}
+
+	// Ambient Stoneward Control Plane Authentication Injection
+	if auth, err := client.LoadFabrialAuth(); err == nil && auth != nil && auth.IsValid() {
+		env["FABRIAL_AUTH_TOKEN"] = auth.Token
+		env["STONEWARD_TOKEN"] = auth.Token
+		env["STONEWARD_TENANT_ID"] = auth.TenantID
+		env["STONEWARD_SERVER_URL"] = auth.ServerURL
+		if auth.UserID != "" {
+			env["STONEWARD_USER_ID"] = auth.UserID
+		}
 	}
 
 	return env

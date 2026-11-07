@@ -13,6 +13,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/bonjoski/fabrial/pkg/auth"
 	"github.com/bonjoski/fabrial/pkg/circuitbreaker"
 	"github.com/bonjoski/fabrial/pkg/doctor"
 	"github.com/bonjoski/fabrial/pkg/integration"
@@ -53,6 +54,18 @@ func main() {
 		sm := session.NewSessionManager()
 		_ = sm.LoadFromFile(sessionFile)
 		handleSessionLaunch(args, sm)
+
+	case "auth":
+		handleAuth(args)
+
+	case "login":
+		handleAuth(append([]string{"login"}, args...))
+
+	case "policy":
+		handlePolicy(args)
+
+	case "sync":
+		handlePolicy(append([]string{"pull"}, args...))
 
 	case "exec", "run":
 		handleExec(args)
@@ -808,4 +821,150 @@ func handleQueue(args []string) {
 	fmt.Printf("✔ Queued Workloads:   %d (max capacity %d)\n", status.QueuedRequests, status.MaxQueueCapacity)
 	fmt.Printf("✔ Saturation Status:  Healthy (host memory protected)\n")
 	fmt.Println(strings.Repeat("─", 65))
+}
+
+func handleAuth(args []string) {
+	if len(args) == 0 {
+		handleAuthStatus()
+		return
+	}
+
+	sub := args[0]
+	subArgs := args[1:]
+
+	switch sub {
+	case "login":
+		handleAuthLogin(subArgs)
+	case "status":
+		handleAuthStatus()
+	case "logout":
+		handleAuthLogout()
+	default:
+		fmt.Fprintf(os.Stderr, "Unknown auth command: %s (usage: fabrial auth [login|status|logout])\n", sub)
+		os.Exit(1)
+	}
+}
+
+func handleAuthLogin(args []string) {
+	opts := auth.LoginOptions{
+		ServerURL: "https://localhost:9443",
+		Insecure:  true,
+	}
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--server":
+			if i+1 < len(args) {
+				opts.ServerURL = args[i+1]
+				i++
+			}
+		case "--email":
+			if i+1 < len(args) {
+				opts.Email = args[i+1]
+				i++
+			}
+		case "--password":
+			if i+1 < len(args) {
+				opts.Password = args[i+1]
+				i++
+			}
+		case "--token":
+			if i+1 < len(args) {
+				opts.Token = args[i+1]
+				i++
+			}
+		case "--tenant":
+			if i+1 < len(args) {
+				opts.TenantID = args[i+1]
+				i++
+			}
+		case "--insecure":
+			opts.Insecure = true
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	fmt.Printf("Connecting to Stoneward Cloud Control Plane at %s...\n", opts.ServerURL)
+	authCtx, bundle, toolchain, err := auth.Login(ctx, opts)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "❌ Authentication failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println(strings.Repeat("─", 75))
+	fmt.Printf("✔ Successfully authenticated as %s (%s)\n", authCtx.Name, authCtx.Email)
+	fmt.Printf("✔ Organization / Tenant: %s (ID: %s)\n", authCtx.OrgName, authCtx.TenantID)
+	fmt.Printf("✔ Role:                  %s\n", authCtx.Role)
+	tokenPreview := authCtx.Token
+	if len(tokenPreview) > 16 {
+		tokenPreview = tokenPreview[:16] + "..."
+	}
+	fmt.Printf("✔ Bearer Token:          %s (saved to ~/.fabrial/auth.json)\n", tokenPreview)
+	fmt.Printf("✔ Policy Bundle:         Version %d (verified Ed25519 signature)\n", bundle.Version)
+	fmt.Printf("✔ Toolchain Policies:    Synchronized across all 10 sovereign tools\n")
+	fmt.Printf("                         - Argus: %d allowed registries, %d blocked\n", len(toolchain.Argus.AllowedRegistries), len(toolchain.Argus.BlockedRegistries))
+	fmt.Printf("                         - Locksmith: cert issuance=%v, %d domains\n", toolchain.Locksmith.CertIssuanceEnabled, len(toolchain.Locksmith.AllowedCertDomains))
+	fmt.Printf("                         - Shield: anti-ssrf=%v, fail-closed=%v\n", toolchain.Shield.BlockCloudMetadata, toolchain.Shield.FailClosedWireGuard)
+	fmt.Println(strings.Repeat("─", 75))
+}
+
+func handleAuthStatus() {
+	authCtx, bundle, err := auth.Status()
+	if err != nil {
+		fmt.Println("❌ Fabrial is currently unauthenticated.")
+		fmt.Println("   Run 'fabrial auth login' to authenticate with the Stoneward control plane.")
+		return
+	}
+
+	fmt.Println("💎 Fabrial Cloud Authentication Status")
+	fmt.Println(strings.Repeat("─", 70))
+	fmt.Printf("✔ Status:        Authenticated\n")
+	fmt.Printf("✔ User:          %s (%s)\n", authCtx.Name, authCtx.Email)
+	fmt.Printf("✔ Organization:  %s [Tenant: %s]\n", authCtx.OrgName, authCtx.TenantID)
+	fmt.Printf("✔ Control Plane: %s\n", authCtx.ServerURL)
+	fmt.Printf("✔ Token Lease:   Expires in %s\n", time.Until(authCtx.ExpiresAt).Round(time.Minute))
+	if bundle != nil {
+		fmt.Printf("✔ Cached Policy: Version %d (valid until %s)\n", bundle.Version, bundle.ValidUntil.Format(time.RFC3339))
+	} else {
+		fmt.Printf("✔ Cached Policy: None (run 'fabrial policy pull' to synchronize)\n")
+	}
+	fmt.Println(strings.Repeat("─", 70))
+}
+
+func handleAuthLogout() {
+	if err := auth.Logout(); err != nil {
+		fmt.Fprintf(os.Stderr, "Error logging out: %v\n", err)
+		os.Exit(1)
+	}
+	fmt.Println("✔ Successfully logged out. Fabrial authentication credentials cleared.")
+}
+
+func handlePolicy(args []string) {
+	if len(args) > 0 && args[0] == "status" {
+		handleAuthStatus()
+		return
+	}
+
+	insecure := true
+	for _, arg := range args {
+		if arg == "--insecure" {
+			insecure = true
+		}
+	}
+
+	fmt.Println("Pulling signed policy bundle from Stoneward control plane...")
+	bundle, toolchain, err := auth.PullPolicy(insecure)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "❌ Policy pull failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	fmt.Println(strings.Repeat("─", 75))
+	fmt.Printf("✔ Policy bundle verified and cached! (Version %d, Tenant: %s)\n", bundle.Version, bundle.TenantID)
+	fmt.Printf("✔ Blocked Syscalls:   %d prohibited (anti-loopback=%v)\n", len(bundle.Rule.BlockedSyscalls), bundle.Rule.BlockLoopbackNet)
+	fmt.Printf("✔ Required Tiers:     %d command routing overrides\n", len(bundle.Rule.RequiredTiers))
+	fmt.Printf("✔ Toolchain Policies: Synchronized across 10 sovereign tools (Argus allowed regs: %d)\n", len(toolchain.Argus.AllowedRegistries))
+	fmt.Println(strings.Repeat("─", 75))
 }
