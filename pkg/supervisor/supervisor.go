@@ -343,8 +343,11 @@ func isSameSupervisedProcess(pid int, expectedStartNs int64) bool {
 	if !isProcessAlive(pid) {
 		return false
 	}
-	if expectedStartNs <= 0 {
+	if expectedStartNs == 0 {
 		return true
+	}
+	if expectedStartNs < 0 {
+		return false
 	}
 	actualNs, err := procident.GetProcessStartTimeNs(pid)
 	if err != nil {

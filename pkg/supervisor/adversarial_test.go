@@ -120,7 +120,7 @@ func TestAdversarial_FAB06_SupervisorPIDRecyclingGuard(t *testing.T) {
 		t.Skip("kernel start timestamp unsupported on this OS")
 	}
 
-	staleStartNs := actualStartNs - 60_000_000_000 // 60s mismatch
+	staleStartNs := actualStartNs + 1000 // mismatch (clock ticks or nanoseconds)
 	record := fmt.Sprintf("%d:%d\n", pid, staleStartNs)
 	if err := os.WriteFile(pidFile, []byte(record), 0600); err != nil {
 		t.Fatalf("write pid file: %v", err)

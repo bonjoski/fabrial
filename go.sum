@@ -2,6 +2,8 @@ github.com/bonjoski/airlock v0.10.1 h1:NwG/J3Lt2WmIIvAqr4O0r+TkgxF47kdpC3TyN5V4g
 github.com/bonjoski/airlock v0.10.1/go.mod h1:HO47iFZd5m6+12A1unprqi6e0M4GTQdMw4A1VtlOrpI=
 github.com/bonjoski/shield v0.1.0 h1:XnvwArIVkcHQg3rb/SYT4Z2O1iT5L465d+JmXvcUKwU=
 github.com/bonjoski/shield v0.1.0/go.mod h1:VWm7DEsydjtT18AsbJ0cg7I0OBOUZsIBUqAGWRNuoXE=
+github.com/bonjoski/stoneward v0.1.1 h1:6IOlVqmHz2Qj7SjFDQ6FWyuYkuKSizYSbyaG37MmKHg=
+github.com/bonjoski/stoneward v0.1.1/go.mod h1:IwHRYyEjsa+UtNNeiprRPgTP33Bu2GUoeUJj+vbwRE8=
 github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=
 github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
 golang.org/x/sys v0.49.0 h1:XbzkgYJHdqh/8m2Uu0W/dQv8nktxx4BFHp1M0gROTXA=
