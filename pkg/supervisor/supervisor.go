@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -507,7 +508,7 @@ func readPIDRecord(path string) (int, int64, error) {
 		return 0, 0, fmt.Errorf("insecure symlink detected for PID file %s", path)
 	}
 
-	if fi.Mode().Perm()&0022 != 0 {
+	if runtime.GOOS != "windows" && fi.Mode().Perm()&0022 != 0 {
 		return 0, 0, fmt.Errorf("insecure permissions (%04o) on PID file %s: must not be group/other writable", fi.Mode().Perm(), path)
 	}
 

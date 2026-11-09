@@ -318,6 +318,17 @@ func TestExecute_Tier2_SucceedsWhenDaemonOnline(t *testing.T) {
 }
 
 func TestRoute_SoulcasterBuildWrapping(t *testing.T) {
+	// Create mock soulcaster binary in temporary directory and prepend to PATH
+	tmpDir := t.TempDir()
+	mockSoulcaster := filepath.Join(tmpDir, "soulcaster")
+	if runtime.GOOS == "windows" {
+		mockSoulcaster += ".exe"
+	}
+	if err := os.WriteFile(mockSoulcaster, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatalf("failed to create mock soulcaster: %v", err)
+	}
+	t.Setenv("PATH", tmpDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
 	opts := &ExecutionOptions{
 		Quiet:  true,
 		DryRun: true,
