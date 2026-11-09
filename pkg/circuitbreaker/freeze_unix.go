@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+
+	"github.com/bonjoski/fabrial/pkg/procident"
 )
 
 func verifyProcessTarget(pid int) error {
@@ -24,7 +26,17 @@ func verifyProcessTarget(pid int) error {
 	return nil
 }
 
-func freezeProcessTree(pid int) (string, error) {
+func freezeProcessTree(pid int, expectedStartTimeNs int64) (string, error) {
+	if expectedStartTimeNs > 0 {
+		actualStartNs, err := procident.GetProcessStartTimeNs(pid)
+		if err != nil {
+			return "", fmt.Errorf("process %d start time check failed: %w", pid, err)
+		}
+		if actualStartNs != expectedStartTimeNs {
+			return "", fmt.Errorf("%w: pid %d expected %d, got %d", ErrPIDRecycled, pid, expectedStartTimeNs, actualStartNs)
+		}
+	}
+
 	// 1. Check for Linux cgroup v2 freezer if available
 	cgroupPath := findLinuxCgroup(pid)
 	if cgroupPath != "" {
@@ -35,7 +47,7 @@ func freezeProcessTree(pid int) (string, error) {
 	}
 
 	// 2. Fall back to standard POSIX SIGSTOP (works on macOS Darwin and Linux)
-	// Try process group first
+	// Signal dedicated process group first if child is process group leader (Setpgid: true)
 	pgid, err := syscall.Getpgid(pid)
 	if err == nil && pgid > 1 && pgid == pid {
 		_ = syscall.Kill(-pid, syscall.SIGSTOP)

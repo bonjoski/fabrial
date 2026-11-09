@@ -29,6 +29,20 @@ type LoginOptions struct {
 	Insecure  bool
 }
 
+// NewTLSConfig returns the TLS client configuration for Stoneward control plane connections.
+// When insecure is false (the default), strict X.509 verification and TLS 1.3 minimum are enforced.
+func NewTLSConfig(insecure bool) *tls.Config {
+	if insecure {
+		return &tls.Config{
+			InsecureSkipVerify: true,
+		}
+	}
+	return &tls.Config{
+		MinVersion:         tls.VersionTLS13,
+		InsecureSkipVerify: false,
+	}
+}
+
 // Login authenticates Fabrial against the Stoneward cloud control plane,
 // pulls down the latest signed policy bundle, and persists credentials.
 func Login(ctx context.Context, opts LoginOptions) (*client.FabrialAuthContext, *policy.PolicyBundle, *policy.ToolchainPolicies, error) {
@@ -41,7 +55,7 @@ func Login(ctx context.Context, opts LoginOptions) (*client.FabrialAuthContext, 
 	authCtx.ServerURL = serverURL
 
 	tr := &http.Transport{
-		TLSClientConfig: &tls.Config{InsecureSkipVerify: opts.Insecure},
+		TLSClientConfig: NewTLSConfig(opts.Insecure),
 	}
 	httpClient := &http.Client{
 		Transport: tr,

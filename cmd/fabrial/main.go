@@ -123,7 +123,7 @@ Ambient Multi-Agent Session Management (Zero Hot-Path Hop Tax):
       Derives short-lived (60s) attenuated subagent tokens with ZERO biometric interruptions.
 
   eval $(fabrial session env)
-      Exports ambient environment (HTTP_PROXY, CONJOINER_TASK_TOKEN, AIRLOCK_ACTIVE)
+      Exports ambient environment (HTTP_PROXY, CONJOINER_TASK_TOKEN, FABRIAL_SESSION_ACTIVE)
       allowing agents and subagents to execute tools directly with zero wrapper latency.
 
   fabrial session list
@@ -760,6 +760,7 @@ func handleSessionLaunch(args []string, sm *session.SessionManager) {
 	var targetArgs []string
 	profile := "agent"
 	useAirlock := true
+	allowUnsandboxed := false
 	biometric := false
 
 	for i := 0; i < len(args); i++ {
@@ -780,6 +781,8 @@ func handleSessionLaunch(args []string, sm *session.SessionManager) {
 			}
 		case "--no-airlock":
 			useAirlock = false
+		case "--allow-degraded-local":
+			allowUnsandboxed = true
 		case "--bio":
 			biometric = true
 		default:
@@ -792,16 +795,17 @@ func handleSessionLaunch(args []string, sm *session.SessionManager) {
 	}
 
 	if targetCmd == "" {
-		fmt.Fprintf(os.Stderr, "Usage: fabrial launch [--profile <profile>] [--no-airlock] [--] <command> [args...]\n")
+		fmt.Fprintf(os.Stderr, "Usage: fabrial launch [--profile <profile>] [--no-airlock] [--allow-degraded-local] [--] <command> [args...]\n")
 		os.Exit(1)
 	}
 
 	cfg := session.LaunchConfig{
-		Profile:       profile,
-		TargetCommand: targetCmd,
-		TargetArgs:    targetArgs,
-		UseAirlock:    useAirlock,
-		Biometric:     biometric,
+		Profile:          profile,
+		TargetCommand:    targetCmd,
+		TargetArgs:       targetArgs,
+		UseAirlock:       useAirlock,
+		AllowUnsandboxed: allowUnsandboxed,
+		Biometric:        biometric,
 	}
 
 	ctx := context.Background()
@@ -812,7 +816,7 @@ func handleSessionLaunch(args []string, sm *session.SessionManager) {
 }
 
 func handleQueue(args []string) {
-	q := queue.NewMicroVMQueue()
+	q := queue.NewCrossProcessMicroVMQueue("")
 	status := q.Status()
 
 	fmt.Println("📦 Fabrial Tier 2 MicroVM Concurrency Queue")
@@ -848,7 +852,7 @@ func handleAuth(args []string) {
 func handleAuthLogin(args []string) {
 	opts := auth.LoginOptions{
 		ServerURL: "https://localhost:9443",
-		Insecure:  true,
+		Insecure:  false,
 	}
 
 	for i := 0; i < len(args); i++ {
@@ -878,8 +882,11 @@ func handleAuthLogin(args []string) {
 				opts.TenantID = args[i+1]
 				i++
 			}
-		case "--insecure":
+		case "--insecure-tls":
 			opts.Insecure = true
+		case "--insecure":
+			fmt.Fprintf(os.Stderr, "Error: --insecure is disallowed; pass --insecure-tls to explicitly bypass TLS verification\n")
+			os.Exit(1)
 		}
 	}
 
@@ -947,10 +954,14 @@ func handlePolicy(args []string) {
 		return
 	}
 
-	insecure := true
+	insecure := false
 	for _, arg := range args {
-		if arg == "--insecure" {
+		switch arg {
+		case "--insecure-tls":
 			insecure = true
+		case "--insecure":
+			fmt.Fprintf(os.Stderr, "Error: --insecure is disallowed; pass --insecure-tls to explicitly bypass TLS verification\n")
+			os.Exit(1)
 		}
 	}
 

@@ -188,6 +188,7 @@ func TestTripwireEndToEnd(t *testing.T) {
 			tripCh <- res
 		},
 	})
+	tw.RegisterSessionPID("agent-session-42", targetPID)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

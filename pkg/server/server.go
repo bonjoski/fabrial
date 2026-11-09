@@ -4,6 +4,9 @@ package server
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/subtle"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net"
@@ -11,6 +14,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -20,13 +24,19 @@ import (
 	"github.com/bonjoski/fabrial/pkg/version"
 )
 
-// maxSSEClients defines the maximum concurrent SSE telemetry subscribers to prevent DoS.
-const maxSSEClients = 32
+const (
+	// maxSSEClients defines the maximum concurrent SSE telemetry subscribers to prevent DoS.
+	maxSSEClients = 32
+	// maxRequestBodyBytes bounds HTTP request payloads on control plane endpoints (1 MiB).
+	maxRequestBodyBytes = 1 << 20
+)
 
 // Config holds runtime configuration for the Fabrial API server.
 type Config struct {
 	SocketPath string
 	TCPAddr    string
+	TokenPath  string
+	AuthToken  string
 	Doctor     *doctor.Inspector
 	Supervisor *supervisor.Supervisor
 }
@@ -40,12 +50,26 @@ func DefaultSocketPath() string {
 	if err == nil && home != "" {
 		return filepath.Join(home, ".fabrial", "fabrial.sock")
 	}
-	return filepath.Join(os.TempDir(), "fabrial.sock")
+	return filepath.Join(os.TempDir(), fmt.Sprintf("fabrial-%d", os.Getuid()), "fabrial.sock")
+}
+
+// DefaultTokenPath returns the standard location for the 0600 ~/.fabrial/server.token file.
+func DefaultTokenPath() string {
+	if p := os.Getenv("FABRIAL_SERVER_TOKEN_FILE"); p != "" {
+		return p
+	}
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" {
+		return filepath.Join(home, ".fabrial", "server.token")
+	}
+	return filepath.Join(os.TempDir(), fmt.Sprintf("fabrial-%d", os.Getuid()), "server.token")
 }
 
 // Server serves the Fabrial control plane over Unix socket and/or TCP.
 type Server struct {
 	cfg        Config
+	authToken  string
+	tokenErr   error
 	mux        *http.ServeMux
 	httpSrv    *http.Server
 	listeners  []net.Listener
@@ -54,10 +78,13 @@ type Server struct {
 	sseMu      sync.RWMutex
 }
 
-// NewServer initializes a new Fabrial control plane server.
+// NewServer initializes a new Fabrial control plane server with a 0600 bearer token.
 func NewServer(cfg Config) *Server {
 	if cfg.SocketPath == "" {
 		cfg.SocketPath = DefaultSocketPath()
+	}
+	if cfg.TokenPath == "" {
+		cfg.TokenPath = DefaultTokenPath()
 	}
 	if cfg.Doctor == nil {
 		cfg.Doctor = doctor.NewInspector(500 * time.Millisecond)
@@ -66,8 +93,21 @@ func NewServer(cfg Config) *Server {
 		cfg.Supervisor = supervisor.NewDefaultSupervisor()
 	}
 
+	var tok string
+	var tokErr error
+	if strings.TrimSpace(cfg.AuthToken) != "" {
+		tok = strings.TrimSpace(cfg.AuthToken)
+	} else {
+		tok, tokErr = loadOrCreateServerToken(cfg.TokenPath)
+		if tok == "" {
+			tok = generateRandomToken()
+		}
+	}
+
 	s := &Server{
 		cfg:        cfg,
+		authToken:  tok,
+		tokenErr:   tokErr,
 		mux:        http.NewServeMux(),
 		sseClients: make(map[chan string]struct{}),
 	}
@@ -76,7 +116,66 @@ func NewServer(cfg Config) *Server {
 	return s
 }
 
-// setupRoutes registers all control plane endpoints with DNS rebinding defenses.
+// AuthToken returns the active bearer token required for mutating /api/v1/* endpoints.
+func (s *Server) AuthToken() string {
+	return s.authToken
+}
+
+func generateRandomToken() string {
+	b := make([]byte, 32)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+func loadOrCreateServerToken(tokenPath string) (string, error) {
+	if fi, err := os.Lstat(tokenPath); err == nil {
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return "", fmt.Errorf("refusing symlinked server token file %s", tokenPath)
+		}
+		if !fi.Mode().IsRegular() {
+			return "", fmt.Errorf("refusing non-regular server token file %s", tokenPath)
+		}
+		if runtime.GOOS != "windows" && fi.Mode().Perm()&0077 != 0 {
+			return "", fmt.Errorf("insecure permissions %04o on server token file %s (expected 0600)", fi.Mode().Perm(), tokenPath)
+		}
+		data, readErr := os.ReadFile(tokenPath)
+		if readErr != nil {
+			return "", fmt.Errorf("read server token file %s: %w", tokenPath, readErr)
+		}
+		trimmed := strings.TrimSpace(string(data))
+		if len(trimmed) >= 32 {
+			return trimmed, nil
+		}
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("stat server token file %s: %w", tokenPath, err)
+	}
+
+	dir := filepath.Dir(tokenPath)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", fmt.Errorf("create token directory %s: %w", dir, err)
+	}
+
+	tok := generateRandomToken()
+	tmpPath := fmt.Sprintf("%s.tmp.%d", tokenPath, os.Getpid())
+	if err := os.WriteFile(tmpPath, []byte(tok+"\n"), 0600); err != nil {
+		return "", fmt.Errorf("write temporary token %s: %w", tmpPath, err)
+	}
+	if err := os.Chmod(tmpPath, 0600); err != nil {
+		if rmErr := os.Remove(tmpPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			// best-effort cleanup
+		}
+		return "", fmt.Errorf("chmod temporary token %s: %w", tmpPath, err)
+	}
+	if err := os.Rename(tmpPath, tokenPath); err != nil {
+		if rmErr := os.Remove(tmpPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			// best-effort cleanup
+		}
+		return "", fmt.Errorf("rename token file %s: %w", tokenPath, err)
+	}
+	return tok, nil
+}
+
+// setupRoutes registers all control plane endpoints with DNS rebinding and bearer auth defenses.
 func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/health", s.handleHealth)
 	s.mux.HandleFunc("/api/v1/health", s.handleHealth)
@@ -88,7 +187,35 @@ func (s *Server) setupRoutes() {
 	s.mux.HandleFunc("/", s.handleRoot)
 }
 
-// Handler returns the HTTP handler with host/origin validation to defeat DNS rebinding.
+func isMutatingAPIRequest(r *http.Request) bool {
+	if !strings.HasPrefix(r.URL.Path, "/api/v1/") {
+		return false
+	}
+	switch r.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	default:
+		return true
+	}
+}
+
+func (s *Server) checkBearerAuth(r *http.Request) bool {
+	if s.tokenErr != nil || s.authToken == "" {
+		return false
+	}
+	hdr := strings.TrimSpace(r.Header.Get("Authorization"))
+	const prefix = "Bearer "
+	if len(hdr) <= len(prefix) || !strings.EqualFold(hdr[:len(prefix)], prefix) {
+		return false
+	}
+	supplied := strings.TrimSpace(hdr[len(prefix):])
+	if len(supplied) != len(s.authToken) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(supplied), []byte(s.authToken)) == 1
+}
+
+// Handler returns the HTTP handler with host/origin validation, request body cap, and bearer auth.
 func (s *Server) Handler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		// Invariant: Path traversal strictly rejected (fail-closed)
@@ -106,6 +233,18 @@ func (s *Server) Handler() http.Handler {
 		origin := r.Header.Get("Origin")
 		if origin != "" && !isLocalOrigin(origin) {
 			http.Error(w, "Forbidden: Cross-origin access disallowed", http.StatusForbidden)
+			return
+		}
+
+		// Cap request body size to prevent memory exhaustion
+		if r.Body != nil {
+			r.Body = http.MaxBytesReader(w, r.Body, maxRequestBodyBytes)
+		}
+
+		// Require 0600 ~/.fabrial/server.token Bearer header on mutating /api/v1/* endpoints
+		if isMutatingAPIRequest(r) && !s.checkBearerAuth(r) {
+			w.Header().Set("WWW-Authenticate", `Bearer realm="fabrial-control-plane"`)
+			http.Error(w, "Unauthorized: valid Authorization Bearer token required", http.StatusUnauthorized)
 			return
 		}
 
@@ -212,7 +351,6 @@ func (s *Server) handleDaemonAction(w http.ResponseWriter, r *http.Request) {
 	name := parts[3]
 	action := parts[4]
 
-	// Invariant: Action whitelist enforcement
 	allowedActions := map[string]bool{"start": true, "stop": true, "restart": true}
 	if !allowedActions[action] {
 		http.Error(w, fmt.Sprintf("Unsupported action %q (allowed: start, stop, restart)", action), http.StatusBadRequest)
@@ -257,6 +395,9 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	rc := http.NewResponseController(w)
+	_ = rc.SetWriteDeadline(time.Time{})
+
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
@@ -272,7 +413,6 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		s.sseMu.Unlock()
 	}()
 
-	// Send initial connection event
 	_, _ = fmt.Fprintf(w, "event: connected\ndata: {\"version\":%q}\n\n", version.Version)
 	flusher.Flush()
 
@@ -301,15 +441,22 @@ func (s *Server) BroadcastEvent(payload string) {
 	}
 }
 
-// Start begins serving on configured endpoints.
-func (s *Server) Start(ctx context.Context) error {
+// Start begins serving on configured endpoints with strict HTTP timeouts and 0600 socket/token hygiene.
+func (s *Server) Start(_ context.Context) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	if s.tokenErr != nil {
+		return fmt.Errorf("control plane bearer token initialization failed: %w", s.tokenErr)
+	}
+
 	s.httpSrv = &http.Server{
-		Handler:      s.Handler(),
-		ReadTimeout:  5 * time.Second,
-		WriteTimeout: 15 * time.Second,
+		Handler:           s.Handler(),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       10 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       60 * time.Second,
+		MaxHeaderBytes:    64 << 10,
 	}
 
 	// 1. Setup Unix socket listener
@@ -317,8 +464,13 @@ func (s *Server) Start(ctx context.Context) error {
 		if err := os.MkdirAll(filepath.Dir(s.cfg.SocketPath), 0700); err != nil {
 			return fmt.Errorf("failed to create socket directory: %w", err)
 		}
-		if rmErr := os.Remove(s.cfg.SocketPath); rmErr != nil && !os.IsNotExist(rmErr) {
-			return fmt.Errorf("failed to unlink pre-existing socket %s: %w", s.cfg.SocketPath, rmErr)
+		if fi, statErr := os.Lstat(s.cfg.SocketPath); statErr == nil {
+			if fi.Mode()&os.ModeSymlink != 0 {
+				return fmt.Errorf("refusing symlinked server socket path %s", s.cfg.SocketPath)
+			}
+			if rmErr := os.Remove(s.cfg.SocketPath); rmErr != nil && !os.IsNotExist(rmErr) {
+				return fmt.Errorf("failed to unlink pre-existing socket %s: %w", s.cfg.SocketPath, rmErr)
+			}
 		}
 
 		ln, err := net.Listen("unix", s.cfg.SocketPath)

@@ -3,9 +3,13 @@ package queue
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -21,11 +25,11 @@ var (
 
 // WorkloadRequest specifies requirements for executing a task inside a Tier 2 microVM.
 type WorkloadRequest struct {
-	SessionID   string        `json:"session_id"`
-	SubtaskID   string        `json:"subtask_id,omitempty"`
-	Command     []string      `json:"command"`
-	MemoryMB    int           `json:"memory_mb,omitempty"`
-	Timeout     time.Duration `json:"timeout,omitempty"`
+	SessionID string        `json:"session_id"`
+	SubtaskID string        `json:"subtask_id,omitempty"`
+	Command   []string      `json:"command"`
+	MemoryMB  int           `json:"memory_mb,omitempty"`
+	Timeout   time.Duration `json:"timeout,omitempty"`
 }
 
 // WorkloadLease represents a granted execution slot in the microVM pool.
@@ -36,6 +40,8 @@ type WorkloadLease struct {
 	AcquiredAt  time.Time `json:"acquired_at"`
 	Release     func()    `json:"-"`
 	released    atomic.Bool
+	slotFile    *os.File
+	sessionFile *os.File
 }
 
 // QueueStatus reports current utilization of the microVM pool.
@@ -47,19 +53,21 @@ type QueueStatus struct {
 }
 
 // MicroVMQueue manages bounded concurrent execution of Tier 2 microVMs.
+// When lockDir is configured, slots are coordinated cross-process via kernel flock(2).
 type MicroVMQueue struct {
 	mu                 sync.Mutex
 	maxSlots           int
 	maxQueueCapacity   int
 	perSessionLimit    int
 	defaultWaitTimeout time.Duration
+	lockDir            string
 
 	activeSlots        int
 	sessionActiveCount map[string]int
 	leases             map[string]*WorkloadLease
 
 	// Wait queue via channels
-	waitQueue          []chan struct{}
+	waitQueue []chan struct{}
 }
 
 // QueueOption configures the MicroVMQueue.
@@ -101,10 +109,36 @@ func WithDefaultWaitTimeout(timeout time.Duration) QueueOption {
 	}
 }
 
+// WithLockDir enables cross-process kernel flock(2) coordination in dir.
+func WithLockDir(dir string) QueueOption {
+	return func(q *MicroVMQueue) {
+		q.lockDir = dir
+	}
+}
+
+// DefaultQueueLockDir returns the host lock directory used for cross-process microVM pooling.
+func DefaultQueueLockDir() string {
+	if env := os.Getenv("FABRIAL_QUEUE_LOCK_DIR"); env != "" {
+		return env
+	}
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" {
+		return filepath.Join(home, ".fabrial", "queue-locks")
+	}
+	return filepath.Join(os.TempDir(), fmt.Sprintf("fabrial-queue-%d", os.Getuid()))
+}
+
 // NewMicroVMQueue initializes a bounded queue for Tier 2 execution slots.
 func NewMicroVMQueue(opts ...QueueOption) *MicroVMQueue {
+	maxSlots := 2
+	if envSlots := os.Getenv("FABRIAL_MAX_MICROVM_SLOTS"); envSlots != "" {
+		if parsed, err := strconv.Atoi(envSlots); err == nil && parsed > 0 {
+			maxSlots = parsed
+		}
+	}
+
 	q := &MicroVMQueue{
-		maxSlots:           2, // Conservative default: 2 concurrent microVMs prevents host memory collapse
+		maxSlots:           maxSlots, // Conservative default: 2 concurrent microVMs prevents host memory collapse
 		maxQueueCapacity:   16,
 		perSessionLimit:    1, // Fair-share: 1 microVM per session by default
 		defaultWaitTimeout: 30 * time.Second,
@@ -118,6 +152,78 @@ func NewMicroVMQueue(opts ...QueueOption) *MicroVMQueue {
 	}
 
 	return q
+}
+
+// NewCrossProcessMicroVMQueue creates a flock-backed MicroVMQueue suitable for coordinating
+// N parallel autonomous subagents across distinct OS processes and git worktrees.
+func NewCrossProcessMicroVMQueue(lockDir string, opts ...QueueOption) *MicroVMQueue {
+	if lockDir == "" {
+		lockDir = DefaultQueueLockDir()
+	}
+	allOpts := make([]QueueOption, 0, len(opts)+1)
+	allOpts = append(allOpts, WithLockDir(lockDir))
+	allOpts = append(allOpts, opts...)
+	return NewMicroVMQueue(allOpts...)
+}
+
+func (q *MicroVMQueue) ensureLockDir() error {
+	if q.lockDir == "" {
+		return nil
+	}
+	if fi, err := os.Lstat(q.lockDir); err == nil {
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("queue lock directory %s must not be a symlink", q.lockDir)
+		}
+		if !fi.IsDir() {
+			return fmt.Errorf("queue lock path %s is not a directory", q.lockDir)
+		}
+		return nil
+	}
+	if err := os.MkdirAll(q.lockDir, 0700); err != nil {
+		return fmt.Errorf("create queue lock directory %s: %w", q.lockDir, err)
+	}
+	return nil
+}
+
+func (q *MicroVMQueue) tryAcquireFlockSlot(sessionID string) (int, *os.File, *os.File, error) {
+	if err := q.ensureLockDir(); err != nil {
+		return -1, nil, nil, err
+	}
+
+	// 1. Cross-process per-session quota check
+	sum := sha256.Sum256([]byte(sessionID))
+	sessPrefix := hex.EncodeToString(sum[:8])
+	var sessFile *os.File
+	for i := 0; i < q.perSessionLimit; i++ {
+		p := filepath.Join(q.lockDir, fmt.Sprintf("sess-%s-%d.lock", sessPrefix, i))
+		f, ok, err := tryLockSlotFile(p)
+		if err != nil {
+			return -1, nil, nil, err
+		}
+		if ok {
+			sessFile = f
+			break
+		}
+	}
+	if sessFile == nil {
+		return -1, nil, nil, fmt.Errorf("%w: session '%s' exceeded cross-process limit (%d)", ErrPerSessionQuota, sessionID, q.perSessionLimit)
+	}
+
+	// 2. Try global host microVM slots [0..maxSlots)
+	for idx := 0; idx < q.maxSlots; idx++ {
+		p := filepath.Join(q.lockDir, fmt.Sprintf("slot-%d.lock", idx))
+		f, ok, err := tryLockSlotFile(p)
+		if err != nil {
+			unlockSlotFile(sessFile)
+			return -1, nil, nil, err
+		}
+		if ok {
+			return idx, f, sessFile, nil
+		}
+	}
+
+	unlockSlotFile(sessFile)
+	return -1, nil, nil, nil
 }
 
 // AcquireSlot requests an execution slot, queueing if all slots are active.
@@ -137,34 +243,36 @@ func (q *MicroVMQueue) AcquireSlot(ctx context.Context, req WorkloadRequest) (*W
 	for {
 		q.mu.Lock()
 
-		// 1. Check Per-Session Quota
+		// 1. Check In-Process Per-Session Quota
 		activeForSession := q.sessionActiveCount[req.SessionID]
 		if activeForSession >= q.perSessionLimit {
 			q.mu.Unlock()
 			return nil, fmt.Errorf("%w: session '%s' currently holds %d slots (limit %d)", ErrPerSessionQuota, req.SessionID, activeForSession, q.perSessionLimit)
 		}
 
-		// 2. Check if Slot Available
+		// 2. Check if Slot Available (in-process AND optional cross-process flock)
 		if q.activeSlots < q.maxSlots {
-			slotIdx := q.activeSlots
-			q.activeSlots++
-			q.sessionActiveCount[req.SessionID]++
-
-			leaseID := generateLeaseID()
-			lease := &WorkloadLease{
-				LeaseID:    leaseID,
-				SessionID:  req.SessionID,
-				SlotIndex:  slotIdx,
-				AcquiredAt: time.Now(),
+			if q.lockDir == "" {
+				slotIdx := q.activeSlots
+				q.activeSlots++
+				q.sessionActiveCount[req.SessionID]++
+				lease := q.registerLeaseLocked(req.SessionID, slotIdx, nil, nil)
+				q.mu.Unlock()
+				return lease, nil
 			}
 
-			lease.Release = func() {
-				q.release(leaseID)
+			slotIdx, slotFile, sessFile, err := q.tryAcquireFlockSlot(req.SessionID)
+			if err != nil {
+				q.mu.Unlock()
+				return nil, err
 			}
-
-			q.leases[leaseID] = lease
-			q.mu.Unlock()
-			return lease, nil
+			if slotFile != nil {
+				q.activeSlots++
+				q.sessionActiveCount[req.SessionID]++
+				lease := q.registerLeaseLocked(req.SessionID, slotIdx, slotFile, sessFile)
+				q.mu.Unlock()
+				return lease, nil
+			}
 		}
 
 		// 3. Queue Saturated Check
@@ -176,15 +284,20 @@ func (q *MicroVMQueue) AcquireSlot(ctx context.Context, req WorkloadRequest) (*W
 		// 4. Enqueue Waiter
 		waitCh := make(chan struct{}, 1)
 		q.waitQueue = append(q.waitQueue, waitCh)
+		hasCrossProc := q.lockDir != ""
 		q.mu.Unlock()
 
-		// 5. Wait for signal or timeout/cancellation
-		select {
-		case <-waitCh:
-			// Notified of freed slot; loop back to re-attempt acquisition
-			continue
-		case <-waitCtx.Done():
-			// Clean up waiter channel from queue
+		var pollCh <-chan time.Time
+		var ticker *time.Ticker
+		if hasCrossProc {
+			ticker = time.NewTicker(10 * time.Millisecond)
+			pollCh = ticker.C
+		}
+
+		removeWaiter := func() {
+			if ticker != nil {
+				ticker.Stop()
+			}
 			q.mu.Lock()
 			for i, ch := range q.waitQueue {
 				if ch == waitCh {
@@ -193,13 +306,43 @@ func (q *MicroVMQueue) AcquireSlot(ctx context.Context, req WorkloadRequest) (*W
 				}
 			}
 			q.mu.Unlock()
+		}
 
+		// 5. Wait for in-process release signal, cross-process flock poll, or timeout/cancellation
+		select {
+		case <-waitCh:
+			if ticker != nil {
+				ticker.Stop()
+			}
+			continue
+		case <-pollCh:
+			removeWaiter()
+			continue
+		case <-waitCtx.Done():
+			removeWaiter()
 			if errors.Is(waitCtx.Err(), context.DeadlineExceeded) {
 				return nil, ErrQueueTimeout
 			}
 			return nil, waitCtx.Err()
 		}
 	}
+}
+
+func (q *MicroVMQueue) registerLeaseLocked(sessionID string, slotIdx int, slotFile, sessFile *os.File) *WorkloadLease {
+	leaseID := generateLeaseID()
+	lease := &WorkloadLease{
+		LeaseID:     leaseID,
+		SessionID:   sessionID,
+		SlotIndex:   slotIdx,
+		AcquiredAt:  time.Now(),
+		slotFile:    slotFile,
+		sessionFile: sessFile,
+	}
+	lease.Release = func() {
+		_ = q.release(leaseID)
+	}
+	q.leases[leaseID] = lease
+	return lease
 }
 
 // Release manually releases a granted lease by ID.
@@ -219,6 +362,11 @@ func (q *MicroVMQueue) release(leaseID string) error {
 	if lease.released.Swap(true) {
 		return nil // already released
 	}
+
+	unlockSlotFile(lease.slotFile)
+	lease.slotFile = nil
+	unlockSlotFile(lease.sessionFile)
+	lease.sessionFile = nil
 
 	delete(q.leases, leaseID)
 	q.activeSlots--
@@ -242,13 +390,41 @@ func (q *MicroVMQueue) release(leaseID string) error {
 	return nil
 }
 
-// Status returns current queue metrics.
+// Status returns current queue metrics, probing cross-process flock slots if configured.
 func (q *MicroVMQueue) Status() QueueStatus {
 	q.mu.Lock()
 	defer q.mu.Unlock()
 
+	active := q.activeSlots
+	if q.lockDir != "" {
+		if err := q.ensureLockDir(); err == nil {
+			crossActive := 0
+			// Count slots owned by OTHER processes plus our own held slot files
+			heldBySelf := make(map[int]bool, len(q.leases))
+			for _, l := range q.leases {
+				heldBySelf[l.SlotIndex] = true
+			}
+			for idx := 0; idx < q.maxSlots; idx++ {
+				if heldBySelf[idx] {
+					crossActive++
+					continue
+				}
+				p := filepath.Join(q.lockDir, fmt.Sprintf("slot-%d.lock", idx))
+				f, ok, err := tryLockSlotFile(p)
+				if err == nil {
+					if ok {
+						unlockSlotFile(f)
+					} else {
+						crossActive++
+					}
+				}
+			}
+			active = crossActive
+		}
+	}
+
 	return QueueStatus{
-		ActiveSlots:      q.activeSlots,
+		ActiveSlots:      active,
 		MaxSlots:         q.maxSlots,
 		QueuedRequests:   len(q.waitQueue),
 		MaxQueueCapacity: q.maxQueueCapacity,

@@ -15,7 +15,12 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/bonjoski/fabrial/pkg/doctor"
+	"github.com/bonjoski/fabrial/pkg/procident"
 )
+
+const maxAlertFrameBytes = 64 << 10 // 64 KiB maximum JSONL alert frame size
 
 // TripHook is a callback function invoked whenever the circuit breaker trips.
 type TripHook func(result *TripResult)
@@ -35,6 +40,11 @@ type TripwireOptions struct {
 	OnTrip          TripHook
 }
 
+type registeredProc struct {
+	pid         int
+	startTimeNs int64
+}
+
 // Tripwire represents the Fabrial circuit breaker monitoring Argus alerts and
 // enforcing sub-3ms process freezes and credential revocations.
 type Tripwire struct {
@@ -48,7 +58,7 @@ type Tripwire struct {
 	trippedCount atomic.Int64
 	lastResult   *TripResult
 	hooks        []TripHook
-	sessionPIDs  map[string][]int
+	sessionPIDs  map[string][]registeredProc
 }
 
 // NewTripwire creates a new circuit breaker tripwire instance.
@@ -68,14 +78,14 @@ func NewTripwire(opts ...TripwireOptions) *Tripwire {
 	}
 
 	tw := &Tripwire{
-		opts:    opt,
+		opts: opt,
 		revoker: NewRevoker(RevokerOptions{
 			LocksmithSocket: opt.LocksmithSocket,
 			ConjoinerSocket: opt.ConjoinerSocket,
 		}),
 		stopCh:      make(chan struct{}),
 		hooks:       make([]TripHook, 0, 4),
-		sessionPIDs: make(map[string][]int),
+		sessionPIDs: make(map[string][]registeredProc),
 	}
 
 	if opt.OnTrip != nil {
@@ -92,14 +102,33 @@ func (tw *Tripwire) AddHook(hook TripHook) {
 	tw.hooks = append(tw.hooks, hook)
 }
 
-// RegisterSessionPID binds a child process PID to a specific SessionID for targeted blast-radius isolation.
+// RegisterSessionPID binds a child process PID (plus its kernel start timestamp)
+// to a specific SessionID for targeted blast-radius isolation.
 func (tw *Tripwire) RegisterSessionPID(sessionID string, pid int) {
+	if sessionID == "" || pid <= 1 {
+		return
+	}
+	startNs, _ := procident.GetProcessStartTimeNs(pid)
+	tw.RegisterSessionPIDWithStartTime(sessionID, pid, startNs)
+}
+
+// RegisterSessionPIDWithStartTime binds a child process PID with an explicit start timestamp.
+func (tw *Tripwire) RegisterSessionPIDWithStartTime(sessionID string, pid int, startTimeNs int64) {
 	if sessionID == "" || pid <= 1 {
 		return
 	}
 	tw.mu.Lock()
 	defer tw.mu.Unlock()
-	tw.sessionPIDs[sessionID] = append(tw.sessionPIDs[sessionID], pid)
+	for i, existing := range tw.sessionPIDs[sessionID] {
+		if existing.pid == pid {
+			tw.sessionPIDs[sessionID][i].startTimeNs = startTimeNs
+			return
+		}
+	}
+	tw.sessionPIDs[sessionID] = append(tw.sessionPIDs[sessionID], registeredProc{
+		pid:         pid,
+		startTimeNs: startTimeNs,
+	})
 }
 
 // UnregisterSessionPID removes a terminated PID from the session binding.
@@ -109,13 +138,13 @@ func (tw *Tripwire) UnregisterSessionPID(sessionID string, pid int) {
 	}
 	tw.mu.Lock()
 	defer tw.mu.Unlock()
-	pids, exists := tw.sessionPIDs[sessionID]
+	procs, exists := tw.sessionPIDs[sessionID]
 	if !exists {
 		return
 	}
-	for i, p := range pids {
-		if p == pid {
-			tw.sessionPIDs[sessionID] = append(pids[:i], pids[i+1:]...)
+	for i, p := range procs {
+		if p.pid == pid {
+			tw.sessionPIDs[sessionID] = append(procs[:i], procs[i+1:]...)
 			break
 		}
 	}
@@ -124,8 +153,8 @@ func (tw *Tripwire) UnregisterSessionPID(sessionID string, pid int) {
 	}
 }
 
-// Start begins listening on or connecting to argus.sock.
-func (tw *Tripwire) Start(ctx context.Context) error {
+// Start begins listening on or connecting to a verified 0600 argus.sock.
+func (tw *Tripwire) Start(_ context.Context) error {
 	tw.mu.Lock()
 	if tw.active {
 		tw.mu.Unlock()
@@ -136,28 +165,56 @@ func (tw *Tripwire) Start(ctx context.Context) error {
 	sockPath := tw.opts.SocketPath
 	tw.mu.Unlock()
 
-	// Try connecting to existing Argus daemon socket
-	conn, err := net.DialTimeout("unix", sockPath, 200*time.Millisecond)
-	if err == nil {
-		tw.mu.Lock()
-		tw.clientConn = conn
-		tw.mu.Unlock()
-		go tw.readLoop(conn)
-		return nil
-	}
-
-	// If connecting fails, bind as Unix listener so Argus can push directly to us
-	_ = os.MkdirAll(filepath.Dir(sockPath), 0755)
-	_ = os.Remove(sockPath)
-
-	l, err := net.Listen("unix", sockPath)
-	if err != nil {
+	failStart := func(err error) error {
 		tw.mu.Lock()
 		tw.active = false
 		tw.mu.Unlock()
-		return fmt.Errorf("failed to bind circuit breaker tripwire socket %s: %w", sockPath, err)
+		return err
 	}
-	_ = os.Chmod(sockPath, 0600)
+
+	// If socket path already exists, verify strict socket security BEFORE attempting to dial or unlink
+	if fi, statErr := os.Lstat(sockPath); statErr == nil {
+		if fi.Mode()&os.ModeSymlink != 0 {
+			return failStart(fmt.Errorf("refusing symlinked tripwire socket %s", sockPath))
+		}
+		if ok, reason := doctor.VerifySocketSecurity(sockPath); ok {
+			conn, dialErr := net.DialTimeout("unix", sockPath, 200*time.Millisecond)
+			if dialErr == nil {
+				if peerErr := procident.VerifyUnixPeerUID(conn); peerErr != nil {
+					_ = conn.Close()
+					return failStart(fmt.Errorf("tripwire peer UID verification failed on %s: %w", sockPath, peerErr))
+				}
+				tw.mu.Lock()
+				tw.clientConn = conn
+				tw.mu.Unlock()
+				go tw.readLoop(conn)
+				return nil
+			}
+		} else if fi.Mode()&os.ModeSocket == 0 {
+			return failStart(fmt.Errorf("refusing insecure non-socket path %s: %s", sockPath, reason))
+		} else {
+			return failStart(fmt.Errorf("refusing insecure tripwire socket %s: %s", sockPath, reason))
+		}
+
+		if rmErr := os.Remove(sockPath); rmErr != nil && !os.IsNotExist(rmErr) {
+			return failStart(fmt.Errorf("failed to remove stale socket %s: %w", sockPath, rmErr))
+		}
+	}
+
+	// Bind as Unix listener with 0700 parent directory and 0600 socket mode
+	sockDir := filepath.Dir(sockPath)
+	if err := os.MkdirAll(sockDir, 0700); err != nil {
+		return failStart(fmt.Errorf("failed to create tripwire socket directory %s: %w", sockDir, err))
+	}
+
+	l, err := net.Listen("unix", sockPath)
+	if err != nil {
+		return failStart(fmt.Errorf("failed to bind circuit breaker tripwire socket %s: %w", sockPath, err))
+	}
+	if err := os.Chmod(sockPath, 0600); err != nil {
+		_ = l.Close()
+		return failStart(fmt.Errorf("failed to enforce 0600 mode on tripwire socket %s: %w", sockPath, err))
+	}
 
 	tw.mu.Lock()
 	tw.listener = l
@@ -183,24 +240,36 @@ func (tw *Tripwire) acceptLoop(l net.Listener) {
 			}
 		}
 
+		if err := procident.VerifyUnixPeerUID(conn); err != nil {
+			_ = conn.Close()
+			continue
+		}
+
 		go tw.readLoop(conn)
 	}
 }
 
 func (tw *Tripwire) readLoop(conn net.Conn) {
 	defer conn.Close()
-	reader := bufio.NewReader(conn)
+
+	lr := io.LimitReader(conn, maxAlertFrameBytes).(*io.LimitedReader)
+	reader := bufio.NewReaderSize(lr, 4096)
 
 	for {
+		lr.N = maxAlertFrameBytes
 		line, err := reader.ReadBytes('\n')
 		if err != nil {
+			if errors.Is(err, io.EOF) && lr.N == 0 && (len(line) == 0 || line[len(line)-1] != '\n') {
+				// Frame exceeded 64 KiB cap; drop connection to prevent memory exhaustion
+				return
+			}
 			if errors.Is(err, io.EOF) || errors.Is(err, net.ErrClosed) {
 				return
 			}
 			return
 		}
 
-		if len(line) == 0 {
+		if len(line) == 0 || len(line) > maxAlertFrameBytes {
 			continue
 		}
 
@@ -215,9 +284,14 @@ func (tw *Tripwire) readLoop(conn net.Conn) {
 }
 
 // Trip executes the instant process freeze and session revocation for an alert.
+// Signaling is strictly restricted to PIDs explicitly registered in tw.sessionPIDs.
 func (tw *Tripwire) Trip(alert *Alert) *TripResult {
 	start := time.Now()
 	incidentID := generateIncidentID()
+
+	if alert == nil {
+		alert = &Alert{}
+	}
 
 	res := &TripResult{
 		IncidentID: incidentID,
@@ -226,35 +300,47 @@ func (tw *Tripwire) Trip(alert *Alert) *TripResult {
 		Timestamp:  start,
 	}
 
-	// 1. Instant Process Freeze (<3ms target) - Scoped to session PIDs and AgentPID
-	pidsToFreeze := make([]int, 0, 4)
-	if alert.AgentPID > 1 {
-		pidsToFreeze = append(pidsToFreeze, alert.AgentPID)
-	}
-
+	// 1. Instant Process Freeze (<3ms target) - STRICTLY restricted to registered tw.sessionPIDs
+	var targets []registeredProc
+	tw.mu.Lock()
 	if alert.SessionID != "" {
-		tw.mu.Lock()
-		if sessionPIDs, ok := tw.sessionPIDs[alert.SessionID]; ok {
-			for _, pid := range sessionPIDs {
-				if pid > 1 && pid != alert.AgentPID {
-					pidsToFreeze = append(pidsToFreeze, pid)
-				}
-			}
+		if procs, ok := tw.sessionPIDs[alert.SessionID]; ok {
+			targets = append(targets, procs...)
 			delete(tw.sessionPIDs, alert.SessionID)
 		}
-		tw.mu.Unlock()
+	} else if alert.AgentPID > 1 {
+		for sessID, procs := range tw.sessionPIDs {
+			for i, p := range procs {
+				if p.pid == alert.AgentPID {
+					targets = append(targets, p)
+					tw.sessionPIDs[sessID] = append(procs[:i], procs[i+1:]...)
+					if len(tw.sessionPIDs[sessID]) == 0 {
+						delete(tw.sessionPIDs, sessID)
+					}
+					break
+				}
+			}
+		}
+	}
+	tw.mu.Unlock()
+
+	if len(targets) == 0 && alert.AgentPID > 0 {
+		res.Error = fmt.Sprintf("refusing to signal unregistered PID %d", alert.AgentPID)
 	}
 
-	for _, pid := range pidsToFreeze {
-		fr, err := Freeze(pid)
+	for _, proc := range targets {
+		fr, err := FreezeVerified(proc.pid, proc.startTimeNs)
 		res.FreezeLatency = time.Since(start)
 		if err != nil {
 			if res.Error == "" {
-				res.Error = fmt.Sprintf("freeze pid %d failed: %v", pid, err)
+				res.Error = fmt.Sprintf("freeze pid %d failed: %v", proc.pid, err)
 			}
 		} else {
 			res.Frozen = true
 			res.FreezeMethod = fr.Method
+			if res.TargetPID == 0 {
+				res.TargetPID = proc.pid
+			}
 		}
 	}
 
@@ -271,10 +357,10 @@ func (tw *Tripwire) Trip(alert *Alert) *TripResult {
 		res.RevocationDetails = FormatErrors(errs)
 	}
 
-	// 3. Persist forensic log
+	// 4. Persist forensic log
 	tw.writeForensicLog(res)
 
-	// 4. Update metrics and notify hooks
+	// 5. Update metrics and notify hooks
 	tw.trippedCount.Add(1)
 
 	tw.mu.Lock()
@@ -296,11 +382,13 @@ func (tw *Tripwire) writeForensicLog(res *TripResult) {
 		if err == nil && home != "" {
 			dir = filepath.Join(home, ".fabrial", "forensics")
 		} else {
-			dir = filepath.Join(os.TempDir(), "fabrial-forensics")
+			dir = filepath.Join(os.TempDir(), fmt.Sprintf("fabrial-forensics-%d", os.Getuid()))
 		}
 	}
 
-	_ = os.MkdirAll(dir, 0700)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return
+	}
 	logFile := filepath.Join(dir, fmt.Sprintf("incident-%s.json", res.IncidentID))
 
 	data, err := json.MarshalIndent(res, "", "  ")
@@ -326,7 +414,12 @@ func (tw *Tripwire) Stop() error {
 	if tw.listener != nil {
 		_ = tw.listener.Close()
 		tw.listener = nil
-		_ = os.Remove(tw.opts.SocketPath)
+		if fi, err := os.Lstat(tw.opts.SocketPath); err == nil && fi.Mode()&os.ModeSymlink == 0 {
+			if rmErr := os.Remove(tw.opts.SocketPath); rmErr != nil && !os.IsNotExist(rmErr) {
+				tw.mu.Unlock()
+				return fmt.Errorf("failed to remove tripwire socket %s: %w", tw.opts.SocketPath, rmErr)
+			}
+		}
 	}
 	tw.mu.Unlock()
 	return nil
@@ -358,19 +451,5 @@ func generateIncidentID() string {
 }
 
 func resolveArgusSocketPath() string {
-	if s := os.Getenv("ARGUS_SOCKET"); s != "" {
-		return s
-	}
-	home, err := os.UserHomeDir()
-	if err == nil && home != "" {
-		p := fmt.Sprintf("%s/.argus/argus.sock", home)
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
-	}
-	tmpCandidate := fmt.Sprintf("%s/argus-%d.sock", os.TempDir(), os.Getuid())
-	if _, err := os.Stat(tmpCandidate); err == nil {
-		return tmpCandidate
-	}
-	return fmt.Sprintf("%s/argus.sock", os.TempDir())
+	return doctor.ResolveArgusSocketPath()
 }

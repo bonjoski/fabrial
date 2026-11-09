@@ -1,6 +1,7 @@
 package router
 
 import (
+	"context"
 	"net"
 	"os"
 	"path/filepath"
@@ -426,6 +427,100 @@ shield:
 	}
 	if !strings.Contains(err.Error(), "Shield wire guard proxy offline") {
 		t.Fatalf("expected error mentioning Shield proxy offline, got: %v", err)
+	}
+}
+
+// TestAdversarial_FAB09_EnforceHermeticAttestationFailClosed verifies that when
+// attestation.enforce_hermetic is true, passing --no-attestation OR missing soulcaster fails closed.
+func TestAdversarial_FAB09_EnforceHermeticAttestationFailClosed(t *testing.T) {
+	tmpDir := t.TempDir()
+	policyFile := filepath.Join(tmpDir, "fabrial.yaml")
+	policyContent := `version: "2"
+attestation:
+  enabled: true
+  engine: "soulcaster"
+  enforce_hermetic: true
+  targets:
+    - "go build*"
+`
+	if err := os.WriteFile(policyFile, []byte(policyContent), 0644); err != nil {
+		t.Fatalf("write policy: %v", err)
+	}
+
+	// 1. --no-attestation bypass must fail closed
+	_, err := Route(&ExecutionOptions{
+		PolicyPath:    policyFile,
+		NoAttestation: true,
+		Quiet:         true,
+	}, []string{"go", "build", "."})
+	if err == nil {
+		t.Fatal("FAIL-OPEN (FAB-09): Route permitted --no-attestation despite enforce_hermetic: true")
+	}
+	if !strings.Contains(err.Error(), "enforce_hermetic") {
+		t.Fatalf("expected enforce_hermetic error, got: %v", err)
+	}
+}
+
+// TestAdversarial_FAB08_RouterExecuteEightSubagentsQueued verifies that N=8 concurrent Tier 2
+// router.Execute invocations queue cleanly via MicroVMQueue without exceeding maxSlots.
+func TestAdversarial_FAB08_RouterExecuteEightSubagentsQueued(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("unix mock script & socket test")
+	}
+
+	tmpDir := t.TempDir()
+	lockDir := filepath.Join(tmpDir, "locks")
+	t.Setenv("FABRIAL_QUEUE_LOCK_DIR", lockDir)
+	t.Setenv("FABRIAL_MAX_MICROVM_SLOTS", "2")
+
+	// Create mock 0755 aegisbox script that sleeps briefly to simulate microVM work
+	binDir := filepath.Join(tmpDir, "bin")
+	if err := os.MkdirAll(binDir, 0755); err != nil {
+		t.Fatalf("mkdir bin: %v", err)
+	}
+	mockAegis := filepath.Join(binDir, "aegisbox")
+	if err := os.WriteFile(mockAegis, []byte("#!/bin/sh\nsleep 0.03\nexit 0\n"), 0755); err != nil {
+		t.Fatalf("write mock aegisbox: %v", err)
+	}
+	t.Setenv("AEGISBOX_BIN", mockAegis)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	sockPath := filepath.Join(os.TempDir(), "fab_rtr_n8.sock")
+	_ = os.Remove(sockPath)
+	ln, err := net.Listen("unix", sockPath)
+	if err != nil {
+		t.Fatalf("listen mock aegisbox sock: %v", err)
+	}
+	defer func() {
+		_ = ln.Close()
+		_ = os.Remove(sockPath)
+	}()
+	_ = os.Chmod(sockPath, 0600)
+	t.Setenv("AEGISBOX_SOCKET", sockPath)
+
+	const subagents = 8
+	errs := make(chan error, subagents)
+	for i := 0; i < subagents; i++ {
+		go func(idx int) {
+			opts := &ExecutionOptions{
+				TierOverride: policy.Tier2,
+				Quiet:        true,
+			}
+			dec, rErr := Route(opts, []string{"python3", "task.py"})
+			if rErr != nil {
+				errs <- rErr
+				return
+			}
+			dec.BinaryPath = mockAegis
+			_, execErr := Execute(context.Background(), dec)
+			errs <- execErr
+		}(i)
+	}
+
+	for i := 0; i < subagents; i++ {
+		if e := <-errs; e != nil {
+			t.Fatalf("subagent %d Tier 2 Execute failed: %v", i, e)
+		}
 	}
 }
 

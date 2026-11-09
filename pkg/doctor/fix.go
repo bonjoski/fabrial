@@ -51,7 +51,100 @@ func NewFixer(inspector *Inspector, dm DaemonManager, projectDir string) *Fixer 
 	}
 }
 
-// FixAll diagnoses all 10 pillars, executes remediations on any degraded or offline component,
+// SecureDir0700 ensures dir exists as a real owned directory (never a symlink) with 0700 mode.
+func SecureDir0700(dir string) (changed bool, err error) {
+	fi, statErr := os.Lstat(dir)
+	if statErr != nil {
+		if !os.IsNotExist(statErr) {
+			return false, fmt.Errorf("lstat %s: %w", dir, statErr)
+		}
+		if mkErr := os.MkdirAll(dir, 0700); mkErr != nil {
+			return false, fmt.Errorf("mkdir %s: %w", dir, mkErr)
+		}
+		return true, nil
+	}
+	if fi.Mode()&os.ModeSymlink != 0 {
+		return false, fmt.Errorf("refusing symlinked directory %s", dir)
+	}
+	if !fi.IsDir() {
+		return false, fmt.Errorf("path %s exists and is not a directory", dir)
+	}
+	if !isOwnedByCurrentUser(fi) {
+		return false, fmt.Errorf("refusing foreign-UID directory %s", dir)
+	}
+	if fi.Mode().Perm()&0077 != 0 {
+		if chErr := os.Chmod(dir, 0700); chErr != nil {
+			return false, fmt.Errorf("chmod 0700 %s: %w", dir, chErr)
+		}
+		return true, nil
+	}
+	return false, nil
+}
+
+// SecureSocket0600 remediates socket permissions to 0600 ONLY after verifying via os.Lstat
+// that sockPath is a real Unix domain socket (not a symlink) owned by the current UID.
+func SecureSocket0600(pillar PillarID, sockPath, desc string) (*FixAction, error) {
+	fi, err := os.Lstat(sockPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("lstat socket %s: %w", sockPath, err)
+	}
+
+	if fi.Mode()&os.ModeSymlink != 0 {
+		act := &FixAction{
+			Pillar:      pillar,
+			Description: "Refused to chmod symlinked socket (symlink attack blocked)",
+			Success:     false,
+			Details:     sockPath,
+		}
+		return act, fmt.Errorf("refusing symlinked socket %s", sockPath)
+	}
+
+	if !isOwnedByCurrentUser(fi) {
+		act := &FixAction{
+			Pillar:      pillar,
+			Description: "Refused to chmod socket owned by foreign UID",
+			Success:     false,
+			Details:     sockPath,
+		}
+		return act, fmt.Errorf("refusing foreign-UID socket %s", sockPath)
+	}
+
+	if fi.Mode()&os.ModeSocket == 0 {
+		act := &FixAction{
+			Pillar:      pillar,
+			Description: "Refused to chmod non-socket path",
+			Success:     false,
+			Details:     sockPath,
+		}
+		return act, fmt.Errorf("refusing non-socket file %s", sockPath)
+	}
+
+	if fi.Mode().Perm()&0077 == 0 {
+		return nil, nil
+	}
+
+	if chErr := os.Chmod(sockPath, 0600); chErr != nil {
+		act := &FixAction{
+			Pillar:      pillar,
+			Description: "Failed to enforce 0600 permissions on socket",
+			Success:     false,
+			Details:     chErr.Error(),
+		}
+		return act, fmt.Errorf("chmod 0600 %s: %w", sockPath, chErr)
+	}
+
+	return &FixAction{
+		Pillar:      pillar,
+		Description: desc,
+		Success:     true,
+		Details:     sockPath,
+	}, nil
+}
+
+// FixAll diagnoses all pillars, executes remediations on any degraded or offline component,
 // and returns the actions taken alongside the re-evaluated diagnostic reports.
 func (f *Fixer) FixAll(ctx context.Context) ([]FixAction, []PillarHealth) {
 	initialReports := f.inspector.InspectAll(ctx, f.projectDir)
@@ -64,15 +157,19 @@ func (f *Fixer) FixAll(ctx context.Context) ([]FixAction, []PillarHealth) {
 		}
 	}
 
-	// Always ensure shared fabric directories (~/.fabrial) are secure
+	// Ensure shared fabric directory (~/.fabrial) is secure without following symlinks
 	if home, err := os.UserHomeDir(); err == nil && home != "" {
 		fabDir := filepath.Join(home, ".fabrial")
-		if err := os.MkdirAll(fabDir, 0700); err == nil {
-			_ = os.Chmod(fabDir, 0700)
+		if _, secErr := SecureDir0700(fabDir); secErr != nil {
+			actions = append(actions, FixAction{
+				Pillar:      PillarAirlock,
+				Description: "Failed to secure ~/.fabrial directory",
+				Success:     false,
+				Details:     secErr.Error(),
+			})
 		}
 	}
 
-	// Re-evaluate diagnostics after remediation
 	updatedReports := f.inspector.InspectAll(ctx, f.projectDir)
 	return actions, updatedReports
 }
@@ -124,74 +221,78 @@ func (f *Fixer) fixLocksmith(ctx context.Context) []FixAction {
 	}
 
 	lockDir := filepath.Join(home, ".locksmith")
-	if fi, err := os.Stat(lockDir); err == nil {
-		if fi.Mode().Perm()&0077 != 0 {
-			if err := os.Chmod(lockDir, 0700); err == nil {
-				actions = append(actions, FixAction{
-					Pillar:      PillarLocksmith,
-					Description: "Secured directory permissions to 0700",
-					Success:     true,
-					Details:     lockDir,
-				})
-			}
-		}
-	} else {
-		_ = os.MkdirAll(lockDir, 0700)
+	if changed, dirErr := SecureDir0700(lockDir); dirErr != nil {
+		actions = append(actions, FixAction{
+			Pillar:      PillarLocksmith,
+			Description: "Refused insecure ~/.locksmith directory",
+			Success:     false,
+			Details:     dirErr.Error(),
+		})
+		return actions
+	} else if changed {
+		actions = append(actions, FixAction{
+			Pillar:      PillarLocksmith,
+			Description: "Secured directory permissions to 0700",
+			Success:     true,
+			Details:     lockDir,
+		})
 	}
 
-	// Remediate symlink / socket permissions
 	sockSymlink := filepath.Join(lockDir, "locksmith.sock")
 	sockDaemon := filepath.Join(lockDir, "locksmithd.sock")
 
-	// If locksmith.sock is a symlink pointing to locksmithd.sock in the same directory, replace with hardlink
-	if lfi, err := os.Lstat(sockSymlink); err == nil && (lfi.Mode()&os.ModeSymlink != 0) {
-		if dfi, err := os.Stat(sockDaemon); err == nil && (dfi.Mode()&os.ModeSocket != 0) {
-			_ = os.Remove(sockSymlink)
-			if err := os.Link(sockDaemon, sockSymlink); err == nil {
-				_ = os.Chmod(sockSymlink, 0600)
-				actions = append(actions, FixAction{
-					Pillar:      PillarLocksmith,
-					Description: "Replaced insecure symlinked socket with verified hardlink (mode 0600)",
-					Success:     true,
-					Details:     fmt.Sprintf("%s -> %s", sockSymlink, sockDaemon),
-				})
-			} else {
-				actions = append(actions, FixAction{
-					Pillar:      PillarLocksmith,
-					Description: "Failed to replace symlinked socket with hardlink",
-					Success:     false,
-					Details:     err.Error(),
-				})
+	// If locksmith.sock is a symlink and locksmithd.sock is a verified owned non-symlink socket, replace safely
+	if lfi, lErr := os.Lstat(sockSymlink); lErr == nil && (lfi.Mode()&os.ModeSymlink != 0) {
+		if dfi, dErr := os.Lstat(sockDaemon); dErr == nil &&
+			(dfi.Mode()&os.ModeSymlink == 0) &&
+			(dfi.Mode()&os.ModeSocket != 0) &&
+			isOwnedByCurrentUser(dfi) {
+			if rmErr := os.Remove(sockSymlink); rmErr == nil {
+				if linkErr := os.Link(sockDaemon, sockSymlink); linkErr == nil {
+					if act, _ := SecureSocket0600(PillarLocksmith, sockSymlink, "Secured hardlinked socket to 0600"); act != nil && !act.Success {
+						actions = append(actions, *act)
+					} else {
+						actions = append(actions, FixAction{
+							Pillar:      PillarLocksmith,
+							Description: "Replaced insecure symlinked socket with verified hardlink (mode 0600)",
+							Success:     true,
+							Details:     fmt.Sprintf("%s -> %s", sockSymlink, sockDaemon),
+						})
+					}
+				} else {
+					actions = append(actions, FixAction{
+						Pillar:      PillarLocksmith,
+						Description: "Failed to replace symlinked socket with hardlink",
+						Success:     false,
+						Details:     linkErr.Error(),
+					})
+				}
 			}
+		} else {
+			actions = append(actions, FixAction{
+				Pillar:      PillarLocksmith,
+				Description: "Refused symlinked Locksmith socket targeting unverified destination",
+				Success:     false,
+				Details:     sockSymlink,
+			})
 		}
 	}
 
-	// Ensure 0600 on daemon socket if it exists
-	if dfi, err := os.Lstat(sockDaemon); err == nil {
-		if dfi.Mode().Perm()&0077 != 0 {
-			if err := os.Chmod(sockDaemon, 0600); err == nil {
-				actions = append(actions, FixAction{
-					Pillar:      PillarLocksmith,
-					Description: "Fixed daemon socket permissions to 0600",
-					Success:     true,
-					Details:     sockDaemon,
-				})
-			}
-		}
+	if act, _ := SecureSocket0600(PillarLocksmith, sockDaemon, "Fixed daemon socket permissions to 0600"); act != nil {
+		actions = append(actions, *act)
 	}
 
-	// Check daemon connectivity
 	targetSock := ResolveLocksmithSocketPath()
-	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", targetSock)
-	if err == nil {
-		_ = conn.Close()
-		return actions
+	if ok, _ := VerifySocketSecurity(targetSock); ok {
+		conn, dialErr := (&net.Dialer{}).DialContext(ctx, "unix", targetSock)
+		if dialErr == nil {
+			_ = conn.Close()
+			return actions
+		}
 	}
 
-	// Daemon is offline; start via DaemonManager if binary exists
-	if _, err := router.FindExecutable("locksmith"); err == nil && f.daemonManager != nil {
-		if err := f.daemonManager.Start(ctx, "Locksmith"); err == nil {
-			// Wait for socket to become active
+	if _, findErr := router.FindExecutable("locksmith"); findErr == nil && f.daemonManager != nil {
+		if startErr := f.daemonManager.Start(ctx, "Locksmith"); startErr == nil {
 			if f.waitForSocket(ctx, targetSock, 3*time.Second) {
 				actions = append(actions, FixAction{
 					Pillar:      PillarLocksmith,
@@ -210,7 +311,7 @@ func (f *Fixer) fixLocksmith(ctx context.Context) []FixAction {
 		} else {
 			actions = append(actions, FixAction{
 				Pillar:      PillarLocksmith,
-				Description: fmt.Sprintf("Failed to start Locksmith daemon: %v", err),
+				Description: fmt.Sprintf("Failed to start Locksmith daemon: %v", startErr),
 				Success:     false,
 			})
 		}
@@ -227,33 +328,34 @@ func (f *Fixer) fixAegisbox(ctx context.Context) []FixAction {
 	}
 
 	aegisDir := filepath.Join(home, ".aegisbox")
-	if err := os.MkdirAll(aegisDir, 0700); err == nil {
-		_ = os.Chmod(aegisDir, 0700)
-	}
-
-	sock := router.ResolveAegisboxSocketPath()
-	if fi, err := os.Lstat(sock); err == nil {
-		if fi.Mode().Perm()&0077 != 0 {
-			_ = os.Chmod(sock, 0600)
-			actions = append(actions, FixAction{
-				Pillar:      PillarAegisbox,
-				Description: "Fixed daemon socket permissions to 0600",
-				Success:     true,
-				Details:     sock,
-			})
-		}
-	}
-
-	// Check if daemon is connectable
-	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", sock)
-	if err == nil {
-		_ = conn.Close()
+	if _, dirErr := SecureDir0700(aegisDir); dirErr != nil {
+		actions = append(actions, FixAction{
+			Pillar:      PillarAegisbox,
+			Description: "Refused insecure ~/.aegisbox directory",
+			Success:     false,
+			Details:     dirErr.Error(),
+		})
 		return actions
 	}
 
-	// If offline, start daemon via manager if binary exists
-	if _, err := router.FindExecutable("aegisbox"); err == nil && f.daemonManager != nil {
-		if err := f.daemonManager.Start(ctx, "Aegisbox"); err == nil {
+	sock := router.ResolveAegisboxSocketPath()
+	if act, secErr := SecureSocket0600(PillarAegisbox, sock, "Fixed daemon socket permissions to 0600"); act != nil {
+		actions = append(actions, *act)
+		if secErr != nil {
+			return actions
+		}
+	}
+
+	if ok, _ := VerifySocketSecurity(sock); ok {
+		conn, dialErr := (&net.Dialer{}).DialContext(ctx, "unix", sock)
+		if dialErr == nil {
+			_ = conn.Close()
+			return actions
+		}
+	}
+
+	if _, findErr := router.FindExecutable("aegisbox"); findErr == nil && f.daemonManager != nil {
+		if startErr := f.daemonManager.Start(ctx, "Aegisbox"); startErr == nil {
 			if f.waitForSocket(ctx, sock, 3*time.Second) {
 				actions = append(actions, FixAction{
 					Pillar:      PillarAegisbox,
@@ -272,7 +374,7 @@ func (f *Fixer) fixAegisbox(ctx context.Context) []FixAction {
 		} else {
 			actions = append(actions, FixAction{
 				Pillar:      PillarAegisbox,
-				Description: fmt.Sprintf("Failed to start Aegisbox daemon: %v", err),
+				Description: fmt.Sprintf("Failed to start Aegisbox daemon: %v", startErr),
 				Success:     false,
 			})
 		}
@@ -289,32 +391,34 @@ func (f *Fixer) fixArgus(ctx context.Context) []FixAction {
 	}
 
 	argusDir := filepath.Join(home, ".argus")
-	if err := os.MkdirAll(argusDir, 0700); err == nil {
-		_ = os.Chmod(argusDir, 0700)
-	}
-
-	sock := ResolveArgusSocketPath()
-	if fi, err := os.Lstat(sock); err == nil {
-		if fi.Mode().Perm()&0077 != 0 {
-			_ = os.Chmod(sock, 0600)
-			actions = append(actions, FixAction{
-				Pillar:      PillarArgus,
-				Description: "Fixed bus socket permissions to 0600",
-				Success:     true,
-				Details:     sock,
-			})
-		}
-	}
-
-	// Check if bus socket is connectable
-	conn, err := (&net.Dialer{}).DialContext(ctx, "unix", sock)
-	if err == nil {
-		_ = conn.Close()
+	if _, dirErr := SecureDir0700(argusDir); dirErr != nil {
+		actions = append(actions, FixAction{
+			Pillar:      PillarArgus,
+			Description: "Refused insecure ~/.argus directory",
+			Success:     false,
+			Details:     dirErr.Error(),
+		})
 		return actions
 	}
 
-	if _, err := router.FindExecutable("argus"); err == nil && f.daemonManager != nil {
-		if err := f.daemonManager.Start(ctx, "Argus"); err == nil {
+	sock := ResolveArgusSocketPath()
+	if act, secErr := SecureSocket0600(PillarArgus, sock, "Fixed bus socket permissions to 0600"); act != nil {
+		actions = append(actions, *act)
+		if secErr != nil {
+			return actions
+		}
+	}
+
+	if ok, _ := VerifySocketSecurity(sock); ok {
+		conn, dialErr := (&net.Dialer{}).DialContext(ctx, "unix", sock)
+		if dialErr == nil {
+			_ = conn.Close()
+			return actions
+		}
+	}
+
+	if _, findErr := router.FindExecutable("argus"); findErr == nil && f.daemonManager != nil {
+		if startErr := f.daemonManager.Start(ctx, "Argus"); startErr == nil {
 			if f.waitForSocket(ctx, sock, 3*time.Second) {
 				actions = append(actions, FixAction{
 					Pillar:      PillarArgus,
@@ -333,7 +437,7 @@ func (f *Fixer) fixArgus(ctx context.Context) []FixAction {
 		} else {
 			actions = append(actions, FixAction{
 				Pillar:      PillarArgus,
-				Description: fmt.Sprintf("Failed to start Argus daemon: %v", err),
+				Description: fmt.Sprintf("Failed to start Argus daemon: %v", startErr),
 				Success:     false,
 			})
 		}
@@ -347,20 +451,25 @@ func (f *Fixer) fixShield(ctx context.Context) []FixAction {
 	home, _ := os.UserHomeDir()
 	if home != "" {
 		shieldDir := filepath.Join(home, ".shield")
-		if err := os.MkdirAll(shieldDir, 0700); err == nil {
-			_ = os.Chmod(shieldDir, 0700)
+		if _, dirErr := SecureDir0700(shieldDir); dirErr != nil {
+			actions = append(actions, FixAction{
+				Pillar:      PillarShield,
+				Description: "Refused insecure ~/.shield directory",
+				Success:     false,
+				Details:     dirErr.Error(),
+			})
+			return actions
 		}
 	}
 
-	// Check if proxy port 127.0.0.1:8443 is connectable
 	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", "127.0.0.1:8443")
 	if err == nil {
 		_ = conn.Close()
 		return actions
 	}
 
-	if _, err := router.FindExecutable("shield"); err == nil && f.daemonManager != nil {
-		if err := f.daemonManager.Start(ctx, "Shield"); err == nil {
+	if _, findErr := router.FindExecutable("shield"); findErr == nil && f.daemonManager != nil {
+		if startErr := f.daemonManager.Start(ctx, "Shield"); startErr == nil {
 			if f.waitForTCP(ctx, "127.0.0.1:8443", 3*time.Second) {
 				actions = append(actions, FixAction{
 					Pillar:      PillarShield,
@@ -379,7 +488,7 @@ func (f *Fixer) fixShield(ctx context.Context) []FixAction {
 		} else {
 			actions = append(actions, FixAction{
 				Pillar:      PillarShield,
-				Description: fmt.Sprintf("Failed to start Shield proxy: %v", err),
+				Description: fmt.Sprintf("Failed to start Shield proxy: %v", startErr),
 				Success:     false,
 			})
 		}
@@ -393,8 +502,14 @@ func (f *Fixer) fixStormcage(ctx context.Context) []FixAction {
 	home, _ := os.UserHomeDir()
 	if home != "" {
 		scDir := filepath.Join(home, ".stormcage")
-		if err := os.MkdirAll(scDir, 0700); err == nil {
-			_ = os.Chmod(scDir, 0700)
+		if _, dirErr := SecureDir0700(scDir); dirErr != nil {
+			actions = append(actions, FixAction{
+				Pillar:      PillarStormcage,
+				Description: "Refused insecure ~/.stormcage directory",
+				Success:     false,
+				Details:     dirErr.Error(),
+			})
+			return actions
 		}
 	}
 
@@ -404,8 +519,8 @@ func (f *Fixer) fixStormcage(ctx context.Context) []FixAction {
 		return actions
 	}
 
-	if _, err := router.FindExecutable("stormcage"); err == nil && f.daemonManager != nil {
-		if err := f.daemonManager.Start(ctx, "Stormcage"); err == nil {
+	if _, findErr := router.FindExecutable("stormcage"); findErr == nil && f.daemonManager != nil {
+		if startErr := f.daemonManager.Start(ctx, "Stormcage"); startErr == nil {
 			if f.waitForTCP(ctx, "127.0.0.1:8088", 3*time.Second) {
 				actions = append(actions, FixAction{
 					Pillar:      PillarStormcage,
@@ -424,7 +539,7 @@ func (f *Fixer) fixStormcage(ctx context.Context) []FixAction {
 		} else {
 			actions = append(actions, FixAction{
 				Pillar:      PillarStormcage,
-				Description: fmt.Sprintf("Failed to start Stormcage daemon: %v", err),
+				Description: fmt.Sprintf("Failed to start Stormcage daemon: %v", startErr),
 				Success:     false,
 			})
 		}
@@ -441,17 +556,33 @@ func (f *Fixer) fixAirlock(_ context.Context) []FixAction {
 	}
 
 	airDir := filepath.Join(home, ".airlock")
-	sandboxesDir := filepath.Join(airDir, "sandboxes")
-	if err := os.MkdirAll(sandboxesDir, 0700); err == nil {
-		_ = os.Chmod(airDir, 0700)
-		_ = os.Chmod(sandboxesDir, 0700)
+	if _, dirErr := SecureDir0700(airDir); dirErr != nil {
 		actions = append(actions, FixAction{
 			Pillar:      PillarAirlock,
-			Description: "Verified and secured ~/.airlock/sandboxes kernel sandbox boundaries (mode 0700)",
-			Success:     true,
-			Details:     sandboxesDir,
+			Description: "Refused insecure ~/.airlock directory",
+			Success:     false,
+			Details:     dirErr.Error(),
 		})
+		return actions
 	}
+
+	sandboxesDir := filepath.Join(airDir, "sandboxes")
+	if _, sbErr := SecureDir0700(sandboxesDir); sbErr != nil {
+		actions = append(actions, FixAction{
+			Pillar:      PillarAirlock,
+			Description: "Refused insecure ~/.airlock/sandboxes directory",
+			Success:     false,
+			Details:     sbErr.Error(),
+		})
+		return actions
+	}
+
+	actions = append(actions, FixAction{
+		Pillar:      PillarAirlock,
+		Description: "Verified and secured ~/.airlock/sandboxes kernel sandbox boundaries (mode 0700)",
+		Success:     true,
+		Details:     sandboxesDir,
+	})
 
 	return actions
 }
@@ -464,21 +595,19 @@ func (f *Fixer) fixConjoiner(_ context.Context) []FixAction {
 	}
 
 	conjDir := filepath.Join(home, ".conjoiner")
-	if err := os.MkdirAll(conjDir, 0700); err == nil {
-		_ = os.Chmod(conjDir, 0700)
+	if _, dirErr := SecureDir0700(conjDir); dirErr != nil {
+		actions = append(actions, FixAction{
+			Pillar:      PillarConjoiner,
+			Description: "Refused insecure ~/.conjoiner directory",
+			Success:     false,
+			Details:     dirErr.Error(),
+		})
+		return actions
 	}
 
 	sock := ResolveConjoinerSocketPath()
-	if fi, err := os.Lstat(sock); err == nil {
-		if fi.Mode().Perm()&0077 != 0 {
-			_ = os.Chmod(sock, 0600)
-			actions = append(actions, FixAction{
-				Pillar:      PillarConjoiner,
-				Description: "Fixed Conjoiner socket permissions to 0600",
-				Success:     true,
-				Details:     sock,
-			})
-		}
+	if act, _ := SecureSocket0600(PillarConjoiner, sock, "Fixed Conjoiner socket permissions to 0600"); act != nil {
+		actions = append(actions, *act)
 	}
 
 	return actions
@@ -491,10 +620,12 @@ func (f *Fixer) waitForSocket(ctx context.Context, sockPath string, timeout time
 		case <-ctx.Done():
 			return false
 		default:
-			conn, err := (&net.Dialer{}).DialContext(ctx, "unix", sockPath)
-			if err == nil {
-				_ = conn.Close()
-				return true
+			if ok, _ := VerifySocketSecurity(sockPath); ok {
+				conn, err := (&net.Dialer{}).DialContext(ctx, "unix", sockPath)
+				if err == nil {
+					_ = conn.Close()
+					return true
+				}
 			}
 			time.Sleep(100 * time.Millisecond)
 		}
@@ -521,8 +652,6 @@ func (f *Fixer) waitForTCP(ctx context.Context, addr string, timeout time.Durati
 }
 
 // ResolveLocksmithSocketPath returns the canonical Locksmith daemon socket path.
-// It prioritizes the official daemon socket (~/.locksmith/locksmithd.sock) before
-// falling back to legacy symlinks or temporary socket locations.
 func ResolveLocksmithSocketPath() string {
 	if sock := os.Getenv("LOCKSMITH_SOCKET"); sock != "" {
 		return sock
@@ -531,7 +660,7 @@ func ResolveLocksmithSocketPath() string {
 	home, err := os.UserHomeDir()
 	if err == nil && home != "" {
 		directSock := filepath.Join(home, ".locksmith", "locksmithd.sock")
-		if _, err := os.Stat(directSock); err == nil {
+		if _, err := os.Lstat(directSock); err == nil {
 			return directSock
 		}
 	}

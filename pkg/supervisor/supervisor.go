@@ -11,10 +11,10 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/bonjoski/fabrial/pkg/doctor"
+	"github.com/bonjoski/fabrial/pkg/procident"
 	"github.com/bonjoski/fabrial/pkg/router"
 )
 
@@ -50,9 +50,64 @@ type ServiceDef struct {
 	HealthProbe func(ctx context.Context) bool
 }
 
+// Engine abstracts process lifecycle execution so Supervisor respects DIP and supports deterministic testing.
+type Engine interface {
+	StartProcess(bin string, args []string, logFile string) (pid int, startTimeNs int64, err error)
+	RunCommand(bin string, args []string) error
+}
+
+type osExecEngine struct{}
+
+func (osExecEngine) StartProcess(bin string, args []string, logFile string) (int, int64, error) {
+	cmd := exec.Command(bin, args...)
+	var logF *os.File
+	if logFile != "" {
+		if err := os.MkdirAll(filepath.Dir(logFile), 0700); err != nil {
+			return 0, 0, fmt.Errorf("create log directory: %w", err)
+		}
+		f, err := os.OpenFile(logFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
+		if err == nil {
+			logF = f
+			cmd.Stdout = f
+			cmd.Stderr = f
+		}
+	}
+
+	// Isolate daemon in its own process group (Setpgid: true)
+	procident.ConfigureChildProcGroup(cmd)
+
+	if err := cmd.Start(); err != nil {
+		if logF != nil {
+			_ = logF.Close()
+		}
+		return 0, 0, err
+	}
+	if logF != nil {
+		_ = logF.Close()
+	}
+
+	pid := cmd.Process.Pid
+	startNs, _ := procident.GetProcessStartTimeNs(pid)
+	return pid, startNs, nil
+}
+
+func (osExecEngine) RunCommand(bin string, args []string) error {
+	cmd := exec.Command(bin, args...)
+	procident.ConfigureChildProcGroup(cmd)
+	return cmd.Run()
+}
+
 // Supervisor orchestrates start, stop, and status operations for resident security daemons.
 type Supervisor struct {
 	Services []ServiceDef
+	Engine   Engine
+}
+
+func (s *Supervisor) engine() Engine {
+	if s.Engine != nil {
+		return s.Engine
+	}
+	return osExecEngine{}
 }
 
 // NewDefaultSupervisor returns a Supervisor pre-configured with all sovereign fabric daemons.
@@ -118,7 +173,7 @@ func NewDefaultSupervisor() *Supervisor {
 			PIDFile:    filepath.Join(home, ".shield", "shield.pid"),
 			LogFile:    filepath.Join(home, ".shield", "proxy.log"),
 			TCPAddr:    "127.0.0.1:8443",
-			HealthProbe: func(ctx context.Context) bool {
+			HealthProbe: func(_ context.Context) bool {
 				_, ok := router.DetectShieldProxy()
 				return ok
 			},
@@ -141,7 +196,10 @@ func NewDefaultSupervisor() *Supervisor {
 		},
 	}
 
-	return &Supervisor{Services: services}
+	return &Supervisor{
+		Services: services,
+		Engine:   osExecEngine{},
+	}
 }
 
 // GetService returns the service definition matching name (case-insensitive).
@@ -193,7 +251,7 @@ func (s *Supervisor) StartService(ctx context.Context, def ServiceDef) ServiceSt
 
 	// 1. Check if already online
 	if def.HealthProbe != nil && def.HealthProbe(ctx) {
-		pid, _ := readPIDFile(def.PIDFile)
+		pid, _, _ := readPIDRecord(def.PIDFile)
 		return ServiceStatus{
 			Name:    def.Name,
 			State:   StateRunning,
@@ -214,27 +272,21 @@ func (s *Supervisor) StartService(ctx context.Context, def ServiceDef) ServiceSt
 		}
 	}
 
-	// 3. Prepare logging directory and process execution
-	if def.LogFile != "" {
-		_ = os.MkdirAll(filepath.Dir(def.LogFile), 0700)
-	}
+	// 3. Prepare PID directory and spawn isolated process group via Engine
 	if def.PIDFile != "" {
-		_ = os.MkdirAll(filepath.Dir(def.PIDFile), 0700)
-	}
-
-	cmd := exec.Command(bin, def.StartArgs...)
-	if def.LogFile != "" {
-		logF, err := os.OpenFile(def.LogFile, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
-		if err == nil {
-			cmd.Stdout = logF
-			cmd.Stderr = logF
+		if mkErr := os.MkdirAll(filepath.Dir(def.PIDFile), 0700); mkErr != nil {
+			return ServiceStatus{
+				Name:       def.Name,
+				State:      StateError,
+				Target:     target,
+				BinaryPath: bin,
+				Message:    fmt.Sprintf("Failed to create PID directory: %v", mkErr),
+			}
 		}
 	}
 
-	// Launch in separate process group so killing parent doesn't terminate background daemon
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-
-	if err := cmd.Start(); err != nil {
+	pid, startNs, err := s.engine().StartProcess(bin, def.StartArgs, def.LogFile)
+	if err != nil {
 		return ServiceStatus{
 			Name:       def.Name,
 			State:      StateError,
@@ -244,9 +296,16 @@ func (s *Supervisor) StartService(ctx context.Context, def ServiceDef) ServiceSt
 		}
 	}
 
-	pid := cmd.Process.Pid
 	if def.PIDFile != "" {
-		_ = os.WriteFile(def.PIDFile, []byte(strconv.Itoa(pid)), 0600)
+		record := strconv.Itoa(pid)
+		if startNs > 0 {
+			record = fmt.Sprintf("%d:%d", pid, startNs)
+		}
+		if fi, statErr := os.Lstat(def.PIDFile); statErr == nil && fi.Mode()&os.ModeSymlink != 0 {
+			// Refuse writing through a symlinked PID file
+		} else {
+			_ = os.WriteFile(def.PIDFile, []byte(record), 0600)
+		}
 	}
 
 	// 4. Poll for readiness up to 2 seconds
@@ -280,7 +339,22 @@ func (s *Supervisor) StartService(ctx context.Context, def ServiceDef) ServiceSt
 	}
 }
 
-// StopService terminates a resident daemon service gracefully.
+func isSameSupervisedProcess(pid int, expectedStartNs int64) bool {
+	if !isProcessAlive(pid) {
+		return false
+	}
+	if expectedStartNs <= 0 {
+		return true
+	}
+	actualNs, err := procident.GetProcessStartTimeNs(pid)
+	if err != nil {
+		return false
+	}
+	return actualNs == expectedStartNs
+}
+
+// StopService terminates a resident daemon service gracefully, verifying kernel process start time
+// to prevent terminating an unrelated process after PID recycling.
 func (s *Supervisor) StopService(_ context.Context, def ServiceDef) ServiceStatus {
 	target := def.SocketPath
 	if target == "" {
@@ -292,15 +366,14 @@ func (s *Supervisor) StopService(_ context.Context, def ServiceDef) ServiceStatu
 	// 1. If explicit stop command is available, execute it first
 	if len(def.StopArgs) > 0 {
 		if bin, err := router.FindExecutable(def.BinaryName); err == nil {
-			cmd := exec.Command(bin, def.StopArgs...)
-			if runErr := cmd.Run(); runErr == nil {
+			if runErr := s.engine().RunCommand(bin, def.StopArgs); runErr == nil {
 				stopped = true
 			}
 		}
 	}
 
-	// 2. Read PID file securely and terminate process tree
-	pid, err := readPIDFile(def.PIDFile)
+	// 2. Read PID file securely and terminate process group only if start timestamp matches
+	pid, startNs, err := readPIDRecord(def.PIDFile)
 	if err != nil {
 		return ServiceStatus{
 			Name:    def.Name,
@@ -311,28 +384,27 @@ func (s *Supervisor) StopService(_ context.Context, def ServiceDef) ServiceStatu
 	}
 
 	if pid > 0 {
-		if isProcessAlive(pid) {
-			// Graceful SIGTERM first
-			_ = syscall.Kill(pid, syscall.SIGTERM)
+		if isSameSupervisedProcess(pid, startNs) {
+			_ = signalDaemonGroup(pid, false)
 
-			// Wait up to 1.5 seconds for graceful shutdown
 			for i := 0; i < 15; i++ {
 				time.Sleep(100 * time.Millisecond)
-				if !isProcessAlive(pid) {
+				if !isSameSupervisedProcess(pid, startNs) {
 					stopped = true
 					break
 				}
 			}
 
-			// Force SIGKILL if still hanging
-			if !stopped {
-				_ = syscall.Kill(pid, syscall.SIGKILL)
+			if !stopped && isSameSupervisedProcess(pid, startNs) {
+				_ = signalDaemonGroup(pid, true)
 				time.Sleep(100 * time.Millisecond)
-				stopped = !isProcessAlive(pid)
+				stopped = !isSameSupervisedProcess(pid, startNs)
 			}
 		} else {
+			// Original daemon already exited (or PID was recycled by an unrelated process)
 			stopped = true
 		}
+
 		if rmErr := os.Remove(def.PIDFile); rmErr != nil && !os.IsNotExist(rmErr) {
 			// Cleaned or already unlinked
 		}
@@ -353,7 +425,7 @@ func (s *Supervisor) StopService(_ context.Context, def ServiceDef) ServiceStatu
 
 	state := StateStopped
 	msg := "Daemon stopped"
-	if !stopped && pid > 0 && isProcessAlive(pid) {
+	if !stopped && pid > 0 && isSameSupervisedProcess(pid, startNs) {
 		state = StateError
 		msg = fmt.Sprintf("Failed to terminate daemon process (PID %d)", pid)
 	}
@@ -379,7 +451,7 @@ func (s *Supervisor) QueryStatus(ctx context.Context, def ServiceDef) ServiceSta
 		online = def.HealthProbe(ctx)
 	}
 
-	pid, _ := readPIDFile(def.PIDFile)
+	pid, startNs, _ := readPIDRecord(def.PIDFile)
 
 	if online {
 		return ServiceStatus{
@@ -391,7 +463,7 @@ func (s *Supervisor) QueryStatus(ctx context.Context, def ServiceDef) ServiceSta
 		}
 	}
 
-	if pid > 0 && isProcessAlive(pid) {
+	if pid > 0 && isSameSupervisedProcess(pid, startNs) {
 		return ServiceStatus{
 			Name:    def.Name,
 			State:   StateRunning,
@@ -409,72 +481,67 @@ func (s *Supervisor) QueryStatus(ctx context.Context, def ServiceDef) ServiceSta
 	}
 }
 
-// readPIDFile securely reads and validates a daemon PID file.
-// Invariant: Symlinks, world-writable files, non-owned files, and system/self PIDs are rejected.
 func readPIDFile(path string) (int, error) {
+	pid, _, err := readPIDRecord(path)
+	return pid, err
+}
+
+// readPIDRecord securely reads and validates a daemon PID file (<pid> or <pid>:<startTimeNs>).
+// Invariant: Symlinks, world-writable files, non-owned files, and system/self PIDs are rejected.
+func readPIDRecord(path string) (int, int64, error) {
 	if path == "" {
-		return 0, nil
+		return 0, 0, nil
 	}
 	fi, err := os.Lstat(path)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return 0, nil
+			return 0, 0, nil
 		}
-		return 0, fmt.Errorf("failed to stat PID file: %w", err)
+		return 0, 0, fmt.Errorf("failed to stat PID file: %w", err)
 	}
 
-	// Invariant: Symlinked PID files are strictly forbidden (symlink attack prevention)
 	if fi.Mode()&os.ModeSymlink != 0 {
-		return 0, fmt.Errorf("insecure symlink detected for PID file %s", path)
+		return 0, 0, fmt.Errorf("insecure symlink detected for PID file %s", path)
 	}
 
-	// Invariant: Group or others must not have write permissions
 	if fi.Mode().Perm()&0022 != 0 {
-		return 0, fmt.Errorf("insecure permissions (%04o) on PID file %s: must not be group/other writable", fi.Mode().Perm(), path)
+		return 0, 0, fmt.Errorf("insecure permissions (%04o) on PID file %s: must not be group/other writable", fi.Mode().Perm(), path)
 	}
 
-	// Invariant: Ownership validation on Unix
 	if err := verifyPIDFileOwnership(fi); err != nil {
-		return 0, err
+		return 0, 0, err
 	}
 
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return 0, fmt.Errorf("failed to read PID file: %w", err)
+		return 0, 0, fmt.Errorf("failed to read PID file: %w", err)
 	}
 
-	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	raw := strings.TrimSpace(string(data))
+	pidPart := raw
+	var startNs int64
+	if before, after, ok := strings.Cut(raw, ":"); ok {
+		pidPart = before
+		parsedNs, nsErr := strconv.ParseInt(after, 10, 64)
+		if nsErr != nil {
+			return 0, 0, fmt.Errorf("malformed PID start timestamp: %w", nsErr)
+		}
+		startNs = parsedNs
+	}
+
+	pid, err := strconv.Atoi(pidPart)
 	if err != nil {
-		return 0, fmt.Errorf("malformed PID file contents: %w", err)
+		return 0, 0, fmt.Errorf("malformed PID file contents: %w", err)
 	}
 
-	// Invariant: Refuse dangerous / system PIDs
 	if pid <= 1 {
-		return 0, fmt.Errorf("invalid PID %d in %s (system PIDs <= 1 rejected to prevent host disruption)", pid, path)
+		return 0, 0, fmt.Errorf("invalid PID %d in %s (system PIDs <= 1 rejected to prevent host disruption)", pid, path)
 	}
 	if pid == os.Getpid() || pid == os.Getppid() {
-		return 0, fmt.Errorf("invalid PID %d in %s (cannot target caller or parent process)", pid, path)
+		return 0, 0, fmt.Errorf("invalid PID %d in %s (cannot target caller or parent process)", pid, path)
 	}
 
-	return pid, nil
-}
-
-func verifyPIDFileOwnership(fi os.FileInfo) error {
-	if stat, ok := fi.Sys().(*syscall.Stat_t); ok {
-		if stat.Uid != uint32(os.Getuid()) {
-			return fmt.Errorf("PID file owned by UID %d, expected %d", stat.Uid, os.Getuid())
-		}
-	}
-	return nil
-}
-
-func isProcessAlive(pid int) bool {
-	if pid <= 0 {
-		return false
-	}
-	// Signal 0 tests process existence and permission
-	err := syscall.Kill(pid, 0)
-	return err == nil
+	return pid, startNs, nil
 }
 
 // Start launches a service by name and implements doctor.DaemonManager.

@@ -11,8 +11,8 @@ func verifyProcessTarget(pid int) error {
 	return nil
 }
 
-func freezeProcessTree(pid int) (string, error) {
-	// Fallback to taskkill /PID on Windows or suspend
+func freezeProcessTree(pid int, _ int64) (string, error) {
+	// Fallback to PowerShell process suspend on Windows
 	cmd := exec.Command("powershell", "-NoProfile", "-Command", fmt.Sprintf("Get-Process -Id %d | ForEach-Object { $_.Suspend() }", pid))
 	if err := cmd.Run(); err != nil {
 		return "", fmt.Errorf("windows process suspend failed: %w", err)

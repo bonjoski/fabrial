@@ -147,6 +147,33 @@ type ShieldConfig struct {
 	StripUnicodeSmuggling bool    `yaml:"strip_unicode_smuggling,omitempty" json:"strip_unicode_smuggling,omitempty"`
 }
 
+// UnmarshalYAML defaults ShieldConfig.FailClosed to true unless explicitly set to false in YAML.
+func (s *ShieldConfig) UnmarshalYAML(value *yaml.Node) error {
+	type rawShieldConfig struct {
+		Enabled               bool    `yaml:"enabled"`
+		ProxyAddr             string  `yaml:"proxy_addr"`
+		AutoInjectEnv         bool    `yaml:"auto_inject_env"`
+		FailClosed            *bool   `yaml:"fail_closed"`
+		EntropyThreshold      float64 `yaml:"entropy_threshold"`
+		StripUnicodeSmuggling bool    `yaml:"strip_unicode_smuggling"`
+	}
+	var raw rawShieldConfig
+	if err := value.Decode(&raw); err != nil {
+		return err
+	}
+	s.Enabled = raw.Enabled
+	s.ProxyAddr = raw.ProxyAddr
+	s.AutoInjectEnv = raw.AutoInjectEnv
+	if raw.FailClosed != nil {
+		s.FailClosed = *raw.FailClosed
+	} else {
+		s.FailClosed = true
+	}
+	s.EntropyThreshold = raw.EntropyThreshold
+	s.StripUnicodeSmuggling = raw.StripUnicodeSmuggling
+	return nil
+}
+
 // FirewallConfig configures prompt context and memory injection defense (Stormcage).
 type FirewallConfig struct {
 	Enabled           bool   `yaml:"enabled" json:"enabled"`
@@ -201,53 +228,87 @@ func (p *Policy) GetDefaultTier() Tier {
 	return Tier1
 }
 
+type commandView struct {
+	rawBin   string
+	origBin  string
+	normBin  string
+	fullCmd  string
+	canonCmd string
+}
+
+func buildCommandView(args []string) commandView {
+	rawBin := args[0]
+	origBin := strings.ToLower(strings.TrimSuffix(filepath.Base(rawBin), ".exe"))
+	normBin := NormalizeBinaryName(rawBin)
+	fullCmd := strings.TrimSpace(strings.Join(args, " "))
+	canon := CanonicalizeCommand(args)
+	canonCmd := strings.TrimSpace(strings.Join(canon, " "))
+	return commandView{
+		rawBin:   rawBin,
+		origBin:  origBin,
+		normBin:  normBin,
+		fullCmd:  fullCmd,
+		canonCmd: canonCmd,
+	}
+}
+
 // Match determines which Tier should execute the specified command.
-// Returns the matched Tier and a descriptive rationale.
+// It recursively unwraps leading KEY=VAL assignments and command wrappers
+// (env, command, nohup, nice, timeout, stdbuf, xargs, sh/bash/zsh -c),
+// canonicalizes versioned binaries and global flags, and evaluates Tier 2 rules
+// BEFORE Tier 1 rules so dual-use tool flags cannot bypass microVM confinement.
 func (p *Policy) Match(cmdArgs []string) (Tier, string) {
 	if len(cmdArgs) == 0 {
 		return p.GetDefaultTier(), "default (no command provided)"
 	}
 
-	fullCmd := strings.TrimSpace(strings.Join(cmdArgs, " "))
-	rawBin := cmdArgs[0]
-	bin := filepath.Base(rawBin)
+	candidates, exceeded := UnwrapCommands(cmdArgs)
+	if exceeded {
+		return Tier2, "wrapper nesting depth exceeded (fail-closed Tier 2)"
+	}
+	if len(candidates) == 0 {
+		return p.GetDefaultTier(), "default (no executable after environment unwrapping)"
+	}
 
-	// 1. Evaluate explicit Rules (top-level rules take precedence)
+	views := make([]commandView, 0, len(candidates))
+	for _, c := range candidates {
+		if len(c) > 0 {
+			views = append(views, buildCommandView(c))
+		}
+	}
+	if len(views) == 0 {
+		return p.GetDefaultTier(), "default (no command provided)"
+	}
+
 	var allRules []Rule
 	allRules = append(allRules, p.Rules...)
 	if p.Routing != nil {
 		allRules = append(allRules, p.Routing.Rules...)
 	}
 
+	// 1. Evaluate explicit Tier 2 Rules FIRST across all outer/inner unwrapped layers
 	for _, rule := range allRules {
-		if rule.Tier == TierUnknown {
+		if rule.Tier != Tier2 {
 			continue
 		}
-		// Match rule tools first
-		for _, tool := range rule.Tools {
-			if matchTool(tool, bin, rawBin, fullCmd) {
-				ruleName := rule.Name
-				if ruleName == "" {
-					ruleName = "custom-rule"
-				}
-				return rule.Tier, fmt.Sprintf("rule %q matched tool %q", ruleName, tool)
-			}
+		ruleName := rule.Name
+		if ruleName == "" {
+			ruleName = "custom-rule"
 		}
-		// Match rule patterns
-		for _, pattern := range rule.Patterns {
-			if matchPattern(pattern, bin, rawBin, fullCmd) {
-				ruleName := rule.Name
-				if ruleName == "" {
-					ruleName = "custom-rule"
+		for _, v := range views {
+			for _, tool := range rule.Tools {
+				if matchToolView(tool, v) {
+					return Tier2, fmt.Sprintf("rule %q matched tool %q", ruleName, tool)
 				}
-				return rule.Tier, fmt.Sprintf("rule %q matched pattern %q", ruleName, pattern)
+			}
+			for _, pattern := range rule.Patterns {
+				if matchPatternView(pattern, v) {
+					return Tier2, fmt.Sprintf("rule %q matched pattern %q", ruleName, pattern)
+				}
 			}
 		}
 	}
 
-	// 2. Evaluate explicit Tool definitions (Tier 1 vs Tier 2)
-	// Explicit tool mapping (e.g., linters in Tier 1, package managers in Tier 2)
-	// takes precedence over generic wildcard patterns (like *.py or *install*).
 	tier1Defs := []TierDefinition{p.Tier1}
 	if p.Routing != nil {
 		tier1Defs = append(tier1Defs, p.Routing.Tier1)
@@ -257,46 +318,91 @@ func (p *Policy) Match(cmdArgs []string) (Tier, string) {
 		tier2Defs = append(tier2Defs, p.Routing.Tier2)
 	}
 
-	// Check explicit Tier 1 tools
+	// 2. Evaluate explicit Tier 2 Tools & Tier 2 Patterns BEFORE Tier 1 across all layers
+	for _, t2 := range tier2Defs {
+		for _, v := range views {
+			for _, tool := range t2.Tools {
+				if matchToolView(tool, v) {
+					return Tier2, fmt.Sprintf("Tier 2 policy matched tool %q", tool)
+				}
+			}
+		}
+	}
+	for _, t2 := range tier2Defs {
+		for _, v := range views {
+			for _, pattern := range t2.Patterns {
+				if matchPatternView(pattern, v) {
+					return Tier2, fmt.Sprintf("Tier 2 policy matched pattern %q", pattern)
+				}
+			}
+		}
+	}
+
+	// 3. Evaluate explicit Tier 1 Rules (only reached once no layer matched Tier 2)
+	primary := views[len(views)-1]
+	for _, rule := range allRules {
+		if rule.Tier != Tier1 {
+			continue
+		}
+		ruleName := rule.Name
+		if ruleName == "" {
+			ruleName = "custom-rule"
+		}
+		for _, tool := range rule.Tools {
+			if matchToolView(tool, primary) {
+				return Tier1, fmt.Sprintf("rule %q matched tool %q", ruleName, tool)
+			}
+		}
+		for _, pattern := range rule.Patterns {
+			if matchPatternView(pattern, primary) {
+				return Tier1, fmt.Sprintf("rule %q matched pattern %q", ruleName, pattern)
+			}
+		}
+	}
+
+	// 4. Evaluate Tier 1 Tools & Tier 1 Patterns on the unwrapped command
 	for _, t1 := range tier1Defs {
 		for _, tool := range t1.Tools {
-			if matchTool(tool, bin, rawBin, fullCmd) {
+			if matchToolView(tool, primary) {
 				return Tier1, fmt.Sprintf("Tier 1 policy matched tool %q", tool)
 			}
 		}
 	}
-
-	// Check explicit Tier 2 tools
-	for _, t2 := range tier2Defs {
-		for _, tool := range t2.Tools {
-			if matchTool(tool, bin, rawBin, fullCmd) {
-				return Tier2, fmt.Sprintf("Tier 2 policy matched tool %q", tool)
-			}
-		}
-	}
-
-	// 3. Evaluate Wildcard / Glob Patterns
-	// Tier 2 patterns (e.g. *.sh, *.py, *install*)
-	for _, t2 := range tier2Defs {
-		for _, pattern := range t2.Patterns {
-			if matchPattern(pattern, bin, rawBin, fullCmd) {
-				return Tier2, fmt.Sprintf("Tier 2 policy matched pattern %q", pattern)
-			}
-		}
-	}
-
-	// Tier 1 patterns (e.g. *lint*, *format*)
 	for _, t1 := range tier1Defs {
 		for _, pattern := range t1.Patterns {
-			if matchPattern(pattern, bin, rawBin, fullCmd) {
+			if matchPatternView(pattern, primary) {
 				return Tier1, fmt.Sprintf("Tier 1 policy matched pattern %q", pattern)
 			}
 		}
 	}
 
-	// 4. Fallback to default tier
+	// 5. Fallback to default tier
 	def := p.GetDefaultTier()
 	return def, fmt.Sprintf("default tier (%s)", def.String())
+}
+
+func matchToolView(toolDef string, v commandView) bool {
+	if matchTool(toolDef, v.normBin, v.rawBin, v.canonCmd) {
+		return true
+	}
+	if v.origBin != v.normBin || v.fullCmd != v.canonCmd {
+		if matchTool(toolDef, v.origBin, v.rawBin, v.fullCmd) {
+			return true
+		}
+	}
+	return false
+}
+
+func matchPatternView(pattern string, v commandView) bool {
+	if matchPattern(pattern, v.normBin, v.rawBin, v.canonCmd) {
+		return true
+	}
+	if v.origBin != v.normBin || v.fullCmd != v.canonCmd {
+		if matchPattern(pattern, v.origBin, v.rawBin, v.fullCmd) {
+			return true
+		}
+	}
+	return false
 }
 
 func matchTool(toolDef, bin, rawBin, fullCmd string) bool {
@@ -320,6 +426,14 @@ func matchTool(toolDef, bin, rawBin, fullCmd string) bool {
 	return false
 }
 
+func isExtensionOnlyPattern(patLower string) bool {
+	if !strings.HasPrefix(patLower, "*.") {
+		return false
+	}
+	ext := patLower[2:]
+	return ext != "" && !strings.ContainsAny(ext, " */?")
+}
+
 func matchPattern(pattern, bin, rawBin, fullCmd string) bool {
 	pattern = strings.TrimSpace(pattern)
 	if pattern == "" {
@@ -327,28 +441,24 @@ func matchPattern(pattern, bin, rawBin, fullCmd string) bool {
 	}
 
 	patLower := strings.ToLower(pattern)
+	binLower := strings.ToLower(bin)
+	rawBinLower := strings.ToLower(rawBin)
+	fullLower := strings.ToLower(fullCmd)
 
-	// Check wildcard matching against binary name
-	if matched, _ := filepath.Match(patLower, strings.ToLower(bin)); matched {
+	// Check slash-aware wildcard matching against binary name and raw binary path
+	if WildcardMatch(patLower, binLower) || WildcardMatch(patLower, rawBinLower) {
 		return true
 	}
 
-	// Check wildcard matching against raw binary path
-	if matched, _ := filepath.Match(patLower, strings.ToLower(rawBin)); matched {
-		return true
+	// Single-token script extension patterns (e.g. "*.sh", "*.py", "*.js") apply to the
+	// invoked executable rather than filename arguments passed to linters/formatters.
+	if isExtensionOnlyPattern(patLower) {
+		return false
 	}
 
-	// Check wildcard matching against full command string
-	if matched, _ := filepath.Match(patLower, strings.ToLower(fullCmd)); matched {
+	// Check slash-aware wildcard matching against full command string (matches '*' across '/')
+	if WildcardMatch(patLower, fullLower) {
 		return true
-	}
-
-	// Simple substring wildcard fallback if not pure glob
-	if strings.HasPrefix(patLower, "*") && strings.HasSuffix(patLower, "*") {
-		sub := strings.Trim(patLower, "*")
-		if strings.Contains(strings.ToLower(bin), sub) || strings.Contains(strings.ToLower(fullCmd), sub) {
-			return true
-		}
 	}
 
 	return false
@@ -409,12 +519,23 @@ func DefaultPolicy() *Policy {
 			Description: "Sensitive tools, package managers, network egress, and untrusted scripts (~100ms MicroVM)",
 			Tools: []string{
 				"npm",
+				"npx",
 				"yarn",
 				"pnpm",
+				"pnpm dlx",
+				"bun",
+				"bunx",
+				"deno",
 				"pip",
 				"pip3",
+				"pipx",
 				"poetry",
+				"uv",
+				"uvx",
 				"cargo",
+				"cargo test",
+				"cargo run",
+				"cargo install",
 				"gem",
 				"bundle",
 				"composer",
@@ -422,14 +543,27 @@ func DefaultPolicy() *Policy {
 				"gradle",
 				"go get",
 				"go install",
+				"go run",
+				"go test",
+				"go generate",
+				"git clone",
+				"git push",
+				"git pull",
+				"git fetch",
+				"git submodule",
 				"python",
 				"python3",
 				"node",
 				"ruby",
 				"perl",
+				"php",
+				"lua",
 				"bash",
 				"sh",
 				"zsh",
+				"dash",
+				"ksh",
+				"fish",
 				"curl",
 				"wget",
 				"nc",
@@ -452,6 +586,18 @@ func DefaultPolicy() *Policy {
 				"wget *",
 				"bash *",
 				"sh *",
+				"zsh *",
+				"find *-exec*",
+				"find *-ok*",
+				"find *-delete*",
+				"find *-fprint*",
+				"find *-fls*",
+				"git *--ext-diff*",
+				"git *--upload-pack*",
+				"git *--receive-pack*",
+				"git *--exec-path*",
+				"git *--config-env*",
+				"git *-c *",
 			},
 		},
 		Attestation: &AttestationConfig{
@@ -466,7 +612,7 @@ func DefaultPolicy() *Policy {
 			Enabled:          true,
 			ProxyAddr:        "127.0.0.1:8443",
 			AutoInjectEnv:    true,
-			FailClosed:       false,
+			FailClosed:       true,
 			EntropyThreshold: 4.2,
 		},
 		Firewall: &FirewallConfig{
@@ -512,38 +658,19 @@ func (p *Policy) ShouldAttest(cmdArgs []string) bool {
 		targets = p.Attestation.Targets
 	}
 
-	args := cmdArgs
-	// Unwrap environment wrappers (env, /usr/bin/env)
-	for len(args) > 0 {
-		base := strings.ToLower(filepath.Base(args[0]))
-		base = strings.TrimSuffix(base, ".exe")
-		if base == "env" {
-			args = args[1:]
-			for len(args) > 0 {
-				if strings.HasPrefix(args[0], "-") || strings.Contains(args[0], "=") {
-					args = args[1:]
-				} else {
-					break
-				}
-			}
+	candidates, exceeded := UnwrapCommands(cmdArgs)
+	if exceeded {
+		return true
+	}
+	for _, cand := range candidates {
+		if len(cand) == 0 {
 			continue
 		}
-		break
-	}
-	if len(args) == 0 {
-		return false
-	}
-
-	fullCmd := strings.TrimSpace(strings.Join(cmdArgs, " "))
-	unwrappedCmd := strings.TrimSpace(strings.Join(args, " "))
-	rawBin := cmdArgs[0]
-	bin := filepath.Base(rawBin)
-	unwrappedRawBin := args[0]
-	unwrappedBin := filepath.Base(unwrappedRawBin)
-
-	for _, pattern := range targets {
-		if matchPattern(pattern, bin, rawBin, fullCmd) || matchPattern(pattern, unwrappedBin, unwrappedRawBin, unwrappedCmd) {
-			return true
+		v := buildCommandView(cand)
+		for _, pattern := range targets {
+			if matchPatternView(pattern, v) {
+				return true
+			}
 		}
 	}
 	return false
@@ -556,7 +683,7 @@ func (p *Policy) GetShieldConfig() *ShieldConfig {
 			Enabled:       true,
 			ProxyAddr:     "127.0.0.1:8443",
 			AutoInjectEnv: true,
-			FailClosed:    false,
+			FailClosed:    true,
 		}
 	}
 	cfg := *p.Shield
@@ -608,9 +735,9 @@ func FindPolicyFile(startDir string) (string, error) {
 			}
 		}
 
-		// Stop if .git is located at current level
+		// Stop if .git is located at current level (directory for standard repos, regular file for git worktrees)
 		gitDir := filepath.Join(curr, ".git")
-		if fi, err := os.Stat(gitDir); err == nil && fi.IsDir() {
+		if _, err := os.Stat(gitDir); err == nil {
 			break
 		}
 

@@ -99,3 +99,44 @@ func TestAdversarial_PIDFileTampering_InsecurePermissions(t *testing.T) {
 		t.Fatalf("expected StopService to reject world-writable PID file (0777) with StateError, got: %s", status.State)
 	}
 }
+
+func TestAdversarial_FAB06_SupervisorPIDRecyclingGuard(t *testing.T) {
+	tempDir := t.TempDir()
+	pidFile := filepath.Join(tempDir, "recycled.pid")
+
+	// Spawn a live unrelated process and write its PID with a mismatched historical start timestamp
+	cmd := os.Getpid() // Wait: self is rejected by self-check; spawn a real sleep child
+	_ = cmd
+	childEngine := osExecEngine{}
+	pid, actualStartNs, err := childEngine.StartProcess("sleep", []string{"30"}, "")
+	if err != nil {
+		t.Skipf("sleep unavailable: %v", err)
+	}
+	defer func() {
+		_ = signalDaemonGroup(pid, true)
+	}()
+
+	if actualStartNs <= 0 {
+		t.Skip("kernel start timestamp unsupported on this OS")
+	}
+
+	staleStartNs := actualStartNs - 60_000_000_000 // 60s mismatch
+	record := fmt.Sprintf("%d:%d\n", pid, staleStartNs)
+	if err := os.WriteFile(pidFile, []byte(record), 0600); err != nil {
+		t.Fatalf("write pid file: %v", err)
+	}
+
+	sup := &Supervisor{Engine: childEngine}
+	status := sup.StopService(context.Background(), ServiceDef{
+		Name:    "RecycledService",
+		PIDFile: pidFile,
+	})
+	if status.State != StateStopped {
+		t.Fatalf("expected StateStopped for stale recycled PID file, got %s (%s)", status.State, status.Message)
+	}
+
+	// Unrelated live process occupying that PID MUST still be alive!
+	if !isProcessAlive(pid) {
+		t.Fatalf("FAIL-OPEN (FAB-06): StopService killed unrelated live process %d after PID recycling!", pid)
+	}
+}

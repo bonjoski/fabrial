@@ -105,6 +105,7 @@ func TestSimulatedMultiStepExfiltrationTriggeringCircuitBreaker(t *testing.T) {
 			tripCh <- res
 		},
 	})
+	tw.RegisterSessionPID("agent-session-adversarial-01", targetPID)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

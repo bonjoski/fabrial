@@ -11,12 +11,43 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/bonjoski/airlock/pkg/bridge"
 	"github.com/bonjoski/fabrial/pkg/policy"
+	"github.com/bonjoski/fabrial/pkg/procident"
+	"github.com/bonjoski/fabrial/pkg/queue"
 )
+
+var (
+	tier2QueueMu   sync.Mutex
+	tier2Queues    = make(map[string]*queue.MicroVMQueue)
+	tier2ReqSeq    atomic.Uint64
+)
+
+func getTier2ExecutionQueue() *queue.MicroVMQueue {
+	lockDir := queue.DefaultQueueLockDir()
+	key := lockDir + "|" + os.Getenv("FABRIAL_MAX_MICROVM_SLOTS")
+
+	tier2QueueMu.Lock()
+	defer tier2QueueMu.Unlock()
+
+	if q, ok := tier2Queues[key]; ok {
+		return q
+	}
+	q := queue.NewCrossProcessMicroVMQueue(
+		lockDir,
+		queue.WithMaxQueueCapacity(32),
+		queue.WithPerSessionLimit(1),
+		queue.WithDefaultWaitTimeout(60*time.Second),
+	)
+	tier2Queues[key] = q
+	return q
+}
 
 // ExecutionOptions holds the resolved runtime flags and parameters for execution.
 type ExecutionOptions struct {
@@ -296,11 +327,24 @@ func Route(opts *ExecutionOptions, cmdArgs []string) (*Decision, error) {
 	var binPath string
 	var execArgs []string
 
-	// Build effective command args, wrapping build commands with soulcaster if enabled by policy
+	// Build effective command args, wrapping build commands with soulcaster if enabled by policy.
+	// When EnforceHermetic is active, fail closed if --no-attestation is passed or soulcaster is missing.
+	needsAttest := pol.ShouldAttest(cmdArgs) || (pol.Attestation == nil && isBuildCommand(cmdArgs))
+	enforceHermetic := pol.Attestation != nil && pol.Attestation.Enabled && pol.Attestation.EnforceHermetic
+
 	effectiveCmdArgs := cmdArgs
-	if !opts.NoAttestation && (pol.ShouldAttest(cmdArgs) || isBuildCommand(cmdArgs)) {
-		if soulcasterBin, err := FindExecutable("soulcaster"); err == nil && soulcasterBin != "" {
-			if len(cmdArgs) > 0 && cmdArgs[0] != "soulcaster" {
+	if needsAttest {
+		if opts.NoAttestation {
+			if enforceHermetic {
+				return nil, errors.New("hermetic build attestation enforced by policy (enforce_hermetic: true); --no-attestation bypass is forbidden")
+			}
+		} else {
+			soulcasterBin, err := FindExecutable("soulcaster")
+			if err != nil || soulcasterBin == "" {
+				if enforceHermetic {
+					return nil, fmt.Errorf("hermetic build attestation enforced by policy (enforce_hermetic: true), but soulcaster binary is unavailable: %w", err)
+				}
+			} else if len(cmdArgs) > 0 && policy.NormalizeBinaryName(cmdArgs[0]) != "soulcaster" {
 				effectiveCmdArgs = append([]string{"soulcaster", "wrap", "--"}, cmdArgs...)
 			}
 		}
@@ -428,7 +472,27 @@ func Execute(ctx context.Context, dec *Decision) (int, error) {
 		return 0, nil
 	}
 
+	// Bound concurrent Tier 2 microVM launches across N subagents via cross-process flock queue
+	if dec.Tier == policy.Tier2 {
+		q := getTier2ExecutionQueue()
+		reqID := fmt.Sprintf("exec-%d-%d", os.Getpid(), tier2ReqSeq.Add(1))
+		subtask := ""
+		if dec.Options != nil {
+			subtask = dec.Options.SubagentTask
+		}
+		lease, err := q.AcquireSlot(ctx, queue.WorkloadRequest{
+			SessionID: reqID,
+			SubtaskID: subtask,
+			Command:   dec.Command,
+		})
+		if err != nil {
+			return 1, fmt.Errorf("fabrial: Tier 2 microVM queue rejected workload: %w", err)
+		}
+		defer lease.Release()
+	}
+
 	cmd := exec.CommandContext(ctx, dec.BinaryPath, dec.ExecArgs...)
+	procident.ConfigureChildProcGroup(cmd)
 	if len(dec.InjectedEnv) > 0 {
 		cmd.Env = append(os.Environ(), dec.InjectedEnv...)
 	}
@@ -452,28 +516,70 @@ func Execute(ctx context.Context, dec *Decision) (int, error) {
 	return 0, nil
 }
 
-// FindExecutable searches for a binary on PATH and standard installation prefixes.
+// FindExecutable searches for a binary across trusted absolute PATH directories and standard
+// installation prefixes, refusing relative PATH entries (e.g. ".") and world-writable binaries.
 func FindExecutable(name string) (string, error) {
-	if p, err := exec.LookPath(name); err == nil {
-		return p, nil
+	if name == "" || strings.ContainsRune(name, filepath.Separator) {
+		return "", fmt.Errorf("invalid executable lookup name %q", name)
+	}
+
+	checkCandidate := func(cand string) (string, bool) {
+		fi, err := os.Stat(cand)
+		if err != nil || fi.IsDir() {
+			return "", false
+		}
+		if runtime.GOOS != "windows" {
+			if fi.Mode()&0111 == 0 {
+				return "", false
+			}
+			// Reject world-writable executables to defeat untrusted drop-in hijacking
+			if fi.Mode().Perm()&0002 != 0 {
+				return "", false
+			}
+		}
+		return cand, true
+	}
+
+	exts := []string{""}
+	if runtime.GOOS == "windows" {
+		exts = []string{".exe", ".bat", ".cmd", ""}
+	}
+
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if dir == "" || !filepath.IsAbs(dir) {
+			continue
+		}
+		for _, ext := range exts {
+			if p, ok := checkCandidate(filepath.Join(dir, name+ext)); ok {
+				return p, nil
+			}
+		}
 	}
 
 	home, _ := os.UserHomeDir()
 	candidates := []string{
 		filepath.Join("/opt/homebrew/bin", name),
 		filepath.Join("/usr/local/bin", name),
-		filepath.Join(home, ".local", "bin", name),
-		filepath.Join(home, "bin", name),
-		filepath.Join(home, "go", "bin", name),
+		filepath.Join("/usr/bin", name),
+		filepath.Join("/bin", name),
+	}
+	if home != "" {
+		candidates = append(candidates,
+			filepath.Join(home, ".local", "bin", name),
+			filepath.Join(home, "bin", name),
+			filepath.Join(home, "go", "bin", name),
+		)
 	}
 
 	for _, c := range candidates {
-		if fi, err := os.Stat(c); err == nil && !fi.IsDir() && (fi.Mode()&0111 != 0) {
-			return c, nil
+		for _, ext := range exts {
+			if p, ok := checkCandidate(c + ext); ok {
+				return p, nil
+			}
 		}
 	}
 
-	return "", fmt.Errorf("%s binary not found on PATH or standard install directories", name)
+	return "", fmt.Errorf("%s binary not found on trusted PATH or standard install directories", name)
 }
 
 // ResolveAegisboxSocketPath returns the path to the Aegisbox daemon Unix domain socket.
@@ -548,84 +654,49 @@ func validateSubagentTaskID(taskID string) error {
 }
 
 // isBuildCommand checks if the command arguments match a compiler or build pipeline tool.
-// Unpeels wrappers like 'env' or '/usr/bin/env' and skips flags to defeat evasion.
+// Recursively unpeels wrappers (env, command, nohup, nice, timeout, stdbuf, xargs, sh/bash/zsh -c),
+// normalizes versioned binaries, and strips global flags to defeat evasion.
 func isBuildCommand(cmdArgs []string) bool {
 	if len(cmdArgs) == 0 {
 		return false
 	}
 
-	// Unwrap wrappers like "env" or "/usr/bin/env"
-	args := cmdArgs
-	for len(args) > 0 {
-		base := strings.ToLower(filepath.Base(args[0]))
-		base = strings.TrimSuffix(base, ".exe")
-		if base == "env" {
-			args = args[1:]
-			// Skip env flags and KEY=VAL definitions
-			for len(args) > 0 {
-				if strings.HasPrefix(args[0], "-") {
-					args = args[1:]
-				} else if strings.Contains(args[0], "=") {
-					args = args[1:]
-				} else {
-					break
-				}
-			}
+	candidates, exceeded := policy.UnwrapCommands(cmdArgs)
+	if exceeded {
+		return true
+	}
+
+	for _, cand := range candidates {
+		canon := policy.CanonicalizeCommand(cand)
+		if len(canon) == 0 {
 			continue
 		}
-		break
-	}
-
-	if len(args) == 0 {
-		return false
-	}
-
-	tool := strings.ToLower(filepath.Base(args[0]))
-	tool = strings.TrimSuffix(tool, ".exe")
-
-	switch tool {
-	case "make", "cmake", "ninja", "gcc", "g++", "clang", "clang++", "rustc":
-		return true
-
-	case "go":
-		// Find first non-flag subcommand
-		for i := 1; i < len(args); i++ {
-			arg := args[i]
-			if strings.HasPrefix(arg, "-") {
-				continue
-			}
-			if arg == "build" || arg == "install" {
-				return true
-			}
-			if arg == "test" {
-				// Check for -c flag which compiles a test binary
-				for j := i + 1; j < len(args); j++ {
-					if args[j] == "-c" || strings.HasPrefix(args[j], "-c=") {
-						return true
+		tool := canon[0]
+		switch tool {
+		case "make", "cmake", "ninja", "gcc", "g++", "clang", "clang++", "rustc":
+			return true
+		case "go":
+			if len(canon) >= 2 {
+				sub := canon[1]
+				if sub == "build" || sub == "install" {
+					return true
+				}
+				if sub == "test" {
+					for _, a := range canon[2:] {
+						if a == "-c" || strings.HasPrefix(a, "-c=") {
+							return true
+						}
 					}
 				}
 			}
-			break
-		}
-		return false
-
-	case "cargo":
-		// Find first non-flag subcommand
-		for i := 1; i < len(args); i++ {
-			arg := args[i]
-			if strings.HasPrefix(arg, "-") {
-				continue
-			}
-			if arg == "build" || arg == "check" {
+		case "cargo":
+			if len(canon) >= 2 && (canon[1] == "build" || canon[1] == "check") {
 				return true
 			}
-			break
 		}
-		return false
-
-	default:
-		return false
 	}
+
+	return false
 }
 
 // DetectShieldProxy checks if Shield local proxy is listening on preferred addrs, 127.0.0.1:8443, 127.0.0.1:8080, or SHIELD_PROXY_ADDR.

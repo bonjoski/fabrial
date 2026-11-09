@@ -515,40 +515,27 @@ func FormatJSON(results []PillarHealth) ([]byte, error) {
 	return json.MarshalIndent(results, "", "  ")
 }
 
-// ResolveArgusSocketPath returns the active or fallback Argus socket location.
+// ResolveArgusSocketPath returns the canonical user-scoped Argus socket location (~/.argus/argus.sock).
+// World-writable /tmp fallbacks are strictly forbidden to prevent local socket hijacking.
 func ResolveArgusSocketPath() string {
 	if s := os.Getenv("ARGUS_SOCKET"); s != "" {
 		return s
 	}
 	home, err := os.UserHomeDir()
 	if err == nil && home != "" {
-		p := filepath.Join(home, ".argus", "argus.sock")
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
+		return filepath.Join(home, ".argus", "argus.sock")
 	}
-	tmpCandidate := filepath.Join(os.TempDir(), fmt.Sprintf("argus-%d.sock", os.Getuid()))
-	if _, err := os.Stat(tmpCandidate); err == nil {
-		return tmpCandidate
-	}
-	return filepath.Join(os.TempDir(), "argus.sock")
+	return filepath.Join(os.TempDir(), fmt.Sprintf("argus-uid-%d", os.Getuid()), "argus.sock")
 }
 
-// ResolveConjoinerSocketPath returns the active or fallback Conjoiner socket location.
+// ResolveConjoinerSocketPath returns the canonical user-scoped Conjoiner socket location (~/.conjoiner/conjoiner.sock).
 func ResolveConjoinerSocketPath() string {
 	if s := os.Getenv("CONJOINER_SOCKET"); s != "" {
 		return s
 	}
 	home, err := os.UserHomeDir()
 	if err == nil && home != "" {
-		p := filepath.Join(home, ".conjoiner", "conjoiner.sock")
-		if _, err := os.Stat(p); err == nil {
-			return p
-		}
+		return filepath.Join(home, ".conjoiner", "conjoiner.sock")
 	}
-	tmpCandidate := filepath.Join(os.TempDir(), fmt.Sprintf("conjoiner-%d.sock", os.Getuid()))
-	if _, err := os.Stat(tmpCandidate); err == nil {
-		return tmpCandidate
-	}
-	return filepath.Join(os.TempDir(), "conjoiner.sock")
+	return filepath.Join(os.TempDir(), fmt.Sprintf("conjoiner-uid-%d", os.Getuid()), "conjoiner.sock")
 }

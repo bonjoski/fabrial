@@ -2,12 +2,14 @@ package session
 
 import (
 	"errors"
+	"fmt"
 	"time"
 )
 
 // Standard error definitions for session management.
 var (
 	ErrSessionNotFound     = errors.New("session not found")
+	ErrSessionRevoked      = fmt.Errorf("%w: session has been revoked", ErrSessionNotFound)
 	ErrSessionExpired      = errors.New("session has expired")
 	ErrScopeEscalation     = errors.New("child session requested scope not granted to parent (monotonic attenuation violation)")
 	ErrInvalidSessionID    = errors.New("invalid session ID format")
@@ -15,6 +17,7 @@ var (
 	ErrBiometricFailed     = errors.New("biometric hardware pre-flight verification failed")
 	ErrMaxConcurrencyLimit = errors.New("maximum concurrent sessions limit exceeded")
 	ErrInvalidSubtaskID    = errors.New("invalid subtask ID (must be 1-128 alphanumeric, underscore or dash characters)")
+	ErrAirlockUnavailable  = errors.New("airlock kernel sandbox binary not found (fail-closed: refusing unconfined execution; install airlock or pass --allow-degraded-local)")
 )
 
 // SessionID uniquely identifies an active session or subagent run.
@@ -39,10 +42,12 @@ type SessionGrant struct {
 	ParentID    SessionID         `json:"parent_id,omitempty"`
 	SubtaskID   string            `json:"subtask_id,omitempty"`
 	MasterToken string            `json:"master_token,omitempty"`
-	Scopes      []string          `json:"scopes"`
+	Scopes      []string          `json:"scopes,omitempty"`
 	CreatedAt   time.Time         `json:"created_at"`
 	ExpiresAt   time.Time         `json:"expires_at"`
-	Environment map[string]string `json:"environment"`
+	Revoked     bool              `json:"revoked,omitempty"`
+	RevokedAt   time.Time         `json:"revoked_at,omitempty"`
+	Environment map[string]string `json:"environment,omitempty"`
 	IsMaster    bool              `json:"is_master"`
 }
 

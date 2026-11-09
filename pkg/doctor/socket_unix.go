@@ -36,3 +36,10 @@ func VerifySocketSecurity(path string) (bool, string) {
 
 	return true, ""
 }
+
+func isOwnedByCurrentUser(fi os.FileInfo) bool {
+	if stat, ok := fi.Sys().(*syscall.Stat_t); ok {
+		return stat.Uid == uint32(os.Getuid())
+	}
+	return true
+}

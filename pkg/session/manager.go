@@ -67,6 +67,17 @@ func NewSessionManager(opts ...ManagerOption) *SessionManager {
 	return sm
 }
 
+func (sm *SessionManager) activeCountLocked() int {
+	count := 0
+	now := time.Now()
+	for _, g := range sm.sessions {
+		if g != nil && !g.Revoked && !now.After(g.ExpiresAt) {
+			count++
+		}
+	}
+	return count
+}
+
 // BeginSession initializes a master session with ambient environment and optional biometric pre-flight.
 func (sm *SessionManager) BeginSession(ctx context.Context, cfg SessionConfig) (*SessionGrant, error) {
 	sm.mu.Lock()
@@ -74,14 +85,14 @@ func (sm *SessionManager) BeginSession(ctx context.Context, cfg SessionConfig) (
 
 	sm.pruneExpiredLocked()
 
-	if len(sm.sessions) >= sm.maxSessions {
+	if sm.activeCountLocked() >= sm.maxSessions {
 		return nil, ErrMaxConcurrencyLimit
 	}
 
 	// 1. Biometric Pre-Flight (Hardware Touch ID amortized once at master start)
 	if cfg.BiometricPreflight && sm.biometricVerifier != nil {
 		if err := sm.biometricVerifier(ctx, "Fabrial Master Session Inception"); err != nil {
-			return nil, fmt.Errorf("%w: %v", ErrBiometricFailed, err)
+			return nil, fmt.Errorf("%w: %w", ErrBiometricFailed, err)
 		}
 	}
 
@@ -141,10 +152,17 @@ func (sm *SessionManager) DeriveChildSession(ctx context.Context, parentID Sessi
 
 	sm.pruneExpiredLocked()
 
+	if sm.activeCountLocked() >= sm.maxSessions {
+		return nil, ErrMaxConcurrencyLimit
+	}
+
 	// 1. Validate Parent
 	parent, exists := sm.sessions[parentID]
 	if !exists {
 		return nil, ErrSessionNotFound
+	}
+	if parent.Revoked {
+		return nil, ErrSessionRevoked
 	}
 	if parent.IsExpired() {
 		return nil, ErrSessionExpired
@@ -201,12 +219,22 @@ func (sm *SessionManager) DeriveChildSession(ctx context.Context, parentID Sessi
 	}
 
 	sm.sessions[childID] = childGrant
-	sm.childrenByParent[parentID] = append(sm.childrenByParent[parentID], childID)
+	sm.appendChildLocked(parentID, childID)
 
 	return cloneGrant(childGrant), nil
 }
 
-// InvalidateSession tears down a specific session and any child sessions.
+func (sm *SessionManager) appendChildLocked(parentID, childID SessionID) {
+	for _, existing := range sm.childrenByParent[parentID] {
+		if existing == childID {
+			return
+		}
+	}
+	sm.childrenByParent[parentID] = append(sm.childrenByParent[parentID], childID)
+}
+
+// InvalidateSession tears down a specific session and any child sessions,
+// persisting revocation tombstones until ExpiresAt so SaveToFile cannot resurrect them.
 func (sm *SessionManager) InvalidateSession(ctx context.Context, id SessionID) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -216,36 +244,72 @@ func (sm *SessionManager) InvalidateSession(ctx context.Context, id SessionID) e
 
 func (sm *SessionManager) invalidateLocked(id SessionID) error {
 	grant, exists := sm.sessions[id]
-	if !exists {
+	if !exists || grant == nil {
 		return ErrSessionNotFound
 	}
+	if grant.Revoked {
+		return ErrSessionRevoked
+	}
+
+	now := time.Now()
 
 	// Cascade invalidation to children if this is a parent/master
 	if children, ok := sm.childrenByParent[id]; ok {
 		for _, childID := range children {
-			if childGrant, childExists := sm.sessions[childID]; childExists {
-				childGrant.MasterToken = ""
-				delete(sm.sessions, childID)
+			if childGrant, childExists := sm.sessions[childID]; childExists && childGrant != nil {
+				revokeGrantInPlace(childGrant, now)
 			}
 		}
-		delete(sm.childrenByParent, id)
+	}
+	// Also scan map in case children were loaded without parent index entry
+	for _, g := range sm.sessions {
+		if g != nil && g.ParentID == id {
+			revokeGrantInPlace(g, now)
+		}
 	}
 
-	// Zeroize token memory
-	grant.MasterToken = ""
-	delete(sm.sessions, id)
+	// Persist tombstone on parent/target grant and scrub secrets
+	revokeGrantInPlace(grant, now)
 
 	return nil
 }
 
-// GetSession returns a clone of the specified session grant if valid.
+func revokeGrantInPlace(g *SessionGrant, revokedAt time.Time) {
+	if g == nil {
+		return
+	}
+	g.Revoked = true
+	if g.RevokedAt.IsZero() {
+		g.RevokedAt = revokedAt
+	}
+	g.MasterToken = ""
+	g.Environment = nil
+}
+
+// ValidateSession validates session ID syntax, existence, non-revocation (including parent lineage), and TTL.
+func (sm *SessionManager) ValidateSession(id SessionID) (*SessionGrant, error) {
+	if !ValidateSessionID(string(id)) {
+		return nil, ErrInvalidSessionID
+	}
+	return sm.GetSession(id)
+}
+
+// GetSession returns a clone of the specified session grant if valid and unrevoked.
 func (sm *SessionManager) GetSession(id SessionID) (*SessionGrant, error) {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 
 	grant, exists := sm.sessions[id]
-	if !exists {
+	if !exists || grant == nil {
 		return nil, ErrSessionNotFound
+	}
+	if grant.Revoked {
+		return nil, ErrSessionRevoked
+	}
+	if grant.ParentID != "" {
+		if parent, pExists := sm.sessions[grant.ParentID]; pExists && parent != nil && parent.Revoked {
+			return nil, ErrSessionRevoked
+		}
 	}
 	if grant.IsExpired() {
 		return nil, ErrSessionExpired
@@ -254,7 +318,7 @@ func (sm *SessionManager) GetSession(id SessionID) (*SessionGrant, error) {
 	return cloneGrant(grant), nil
 }
 
-// ActiveSessions returns a list of all active, unexpired session grants.
+// ActiveSessions returns a list of all active, unrevoked, unexpired session grants.
 func (sm *SessionManager) ActiveSessions() []SessionGrant {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
@@ -263,6 +327,14 @@ func (sm *SessionManager) ActiveSessions() []SessionGrant {
 
 	list := make([]SessionGrant, 0, len(sm.sessions))
 	for _, g := range sm.sessions {
+		if g == nil || g.Revoked || g.IsExpired() {
+			continue
+		}
+		if g.ParentID != "" {
+			if p, ok := sm.sessions[g.ParentID]; ok && p != nil && p.Revoked {
+				continue
+			}
+		}
 		list = append(list, *cloneGrant(g))
 	}
 	return list
@@ -271,8 +343,22 @@ func (sm *SessionManager) ActiveSessions() []SessionGrant {
 func (sm *SessionManager) pruneExpiredLocked() {
 	now := time.Now()
 	for id, g := range sm.sessions {
-		if now.After(g.ExpiresAt) {
-			sm.invalidateLocked(id)
+		if g == nil || now.After(g.ExpiresAt) {
+			delete(sm.sessions, id)
+			delete(sm.childrenByParent, id)
+		}
+	}
+	for parentID, children := range sm.childrenByParent {
+		filtered := children[:0]
+		for _, childID := range children {
+			if _, ok := sm.sessions[childID]; ok {
+				filtered = append(filtered, childID)
+			}
+		}
+		if len(filtered) == 0 {
+			delete(sm.childrenByParent, parentID)
+		} else {
+			sm.childrenByParent[parentID] = filtered
 		}
 	}
 }
@@ -311,10 +397,14 @@ func cloneGrant(g *SessionGrant) *SessionGrant {
 		return nil
 	}
 	c := *g
-	c.Scopes = append([]string(nil), g.Scopes...)
-	c.Environment = make(map[string]string, len(g.Environment))
-	for k, v := range g.Environment {
-		c.Environment[k] = v
+	if g.Scopes != nil {
+		c.Scopes = append([]string(nil), g.Scopes...)
+	}
+	if g.Environment != nil {
+		c.Environment = make(map[string]string, len(g.Environment))
+		for k, v := range g.Environment {
+			c.Environment[k] = v
+		}
 	}
 	return &c
 }
@@ -328,7 +418,8 @@ func DefaultSessionFilePath() string {
 	return filepath.Join(home, ".fabrial", "sessions.json")
 }
 
-// SaveToFile persists active sessions to disk with 0600 permissions using atomic rename and inter-process locking.
+// SaveToFile persists active sessions and revocation tombstones to disk with 0600 permissions
+// using atomic rename, inter-process locking, and monotonic Revoked merging.
 func (sm *SessionManager) SaveToFile(path string) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0700); err != nil {
@@ -350,15 +441,34 @@ func (sm *SessionManager) SaveToFile(path string) error {
 	sm.mu.Lock()
 	sm.pruneExpiredLocked()
 
-	// Merge: add active on-disk sessions not yet in memory
 	now := time.Now()
-	for id, g := range diskSessions {
-		if !now.After(g.ExpiresAt) {
-			if _, exists := sm.sessions[id]; !exists {
-				sm.sessions[id] = g
-				if g.ParentID != "" {
-					sm.childrenByParent[g.ParentID] = append(sm.childrenByParent[g.ParentID], id)
-				}
+	for id, diskG := range diskSessions {
+		if diskG == nil || now.After(diskG.ExpiresAt) {
+			continue
+		}
+		if memG, exists := sm.sessions[id]; exists && memG != nil {
+			// Monotonic tombstone merge: Revoked = disk.Revoked || mem.Revoked
+			if diskG.Revoked && !memG.Revoked {
+				revokeGrantInPlace(memG, diskG.RevokedAt)
+			} else if memG.Revoked {
+				revokeGrantInPlace(memG, memG.RevokedAt)
+			}
+		} else {
+			if diskG.Revoked {
+				revokeGrantInPlace(diskG, diskG.RevokedAt)
+			}
+			sm.sessions[id] = cloneGrant(diskG)
+			if diskG.ParentID != "" {
+				sm.appendChildLocked(diskG.ParentID, id)
+			}
+		}
+	}
+
+	// Enforce parent -> child tombstone cascade across merged sessions
+	for _, g := range sm.sessions {
+		if g != nil && g.ParentID != "" {
+			if parent, ok := sm.sessions[g.ParentID]; ok && parent != nil && parent.Revoked {
+				revokeGrantInPlace(g, parent.RevokedAt)
 			}
 		}
 	}
@@ -370,15 +480,22 @@ func (sm *SessionManager) SaveToFile(path string) error {
 		return err
 	}
 
-	tmpFile := path + ".tmp"
+	tmpFile := fmt.Sprintf("%s.%d.tmp", path, os.Getpid())
 	if err := os.WriteFile(tmpFile, data, 0600); err != nil {
 		return err
 	}
 
-	return os.Rename(tmpFile, path)
+	if err := os.Rename(tmpFile, path); err != nil {
+		if rmErr := os.Remove(tmpFile); rmErr != nil && !os.IsNotExist(rmErr) {
+			_ = rmErr
+		}
+		return err
+	}
+	return nil
 }
 
-// LoadFromFile loads sessions from disk with inter-process locking, pruning expired ones.
+// LoadFromFile loads sessions from disk with inter-process locking, pruning expired ones
+// and preserving monotonic revocation tombstones.
 func (sm *SessionManager) LoadFromFile(path string) error {
 	lock, err := AcquireFileLock(path + ".lock")
 	if err != nil {
@@ -402,15 +519,44 @@ func (sm *SessionManager) LoadFromFile(path string) error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
+	prior := sm.sessions
 	sm.sessions = make(map[SessionID]*SessionGrant)
 	sm.childrenByParent = make(map[SessionID][]SessionID)
 
 	now := time.Now()
-	for id, g := range loaded {
-		if !now.After(g.ExpiresAt) {
-			sm.sessions[id] = g
-			if g.ParentID != "" {
-				sm.childrenByParent[g.ParentID] = append(sm.childrenByParent[g.ParentID], id)
+	for id, diskG := range loaded {
+		if diskG == nil || now.After(diskG.ExpiresAt) {
+			continue
+		}
+		cloned := cloneGrant(diskG)
+		if memG, ok := prior[id]; ok && memG != nil && memG.Revoked {
+			revokeGrantInPlace(cloned, memG.RevokedAt)
+		} else if cloned.Revoked {
+			revokeGrantInPlace(cloned, cloned.RevokedAt)
+		}
+		sm.sessions[id] = cloned
+		if cloned.ParentID != "" {
+			sm.appendChildLocked(cloned.ParentID, id)
+		}
+	}
+
+	// Preserve any unexpired in-memory tombstones not yet flushed to disk
+	for id, memG := range prior {
+		if memG == nil || now.After(memG.ExpiresAt) || !memG.Revoked {
+			continue
+		}
+		if _, exists := sm.sessions[id]; !exists {
+			tombstone := cloneGrant(memG)
+			revokeGrantInPlace(tombstone, memG.RevokedAt)
+			sm.sessions[id] = tombstone
+		}
+	}
+
+	// Enforce parent -> child tombstone cascade
+	for _, g := range sm.sessions {
+		if g != nil && g.ParentID != "" {
+			if parent, ok := sm.sessions[g.ParentID]; ok && parent != nil && parent.Revoked {
+				revokeGrantInPlace(g, parent.RevokedAt)
 			}
 		}
 	}

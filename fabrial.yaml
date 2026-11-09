@@ -66,14 +66,25 @@ tier1:
 tier2:
   description: "Sensitive tools, package managers, network egress, and arbitrary scripts"
   tools:
-    # Package Managers & Build Tools
+    # Package Managers, Ephemeral Runners & Build/Test Executors
     - npm
+    - npx
     - yarn
     - pnpm
+    - pnpm dlx
+    - bun
+    - bunx
+    - deno
     - pip
     - pip3
+    - pipx
     - poetry
+    - uv
+    - uvx
     - cargo
+    - cargo test
+    - cargo run
+    - cargo install
     - gem
     - bundle
     - composer
@@ -81,15 +92,28 @@ tier2:
     - gradle
     - go get
     - go install
+    - go run
+    - go test
+    - go generate
+    # Mutating / Networked Git Operations
+    - git clone
+    - git push
+    - git pull
+    - git fetch
+    - git submodule
     # Interpreters & Shells
     - python
     - python3
     - node
     - ruby
     - perl
+    - php
+    - lua
     - bash
     - sh
     - zsh
+    - dash
+    - ksh
     - fish
     # Network Egress & Remote Transfer
     - curl
@@ -114,3 +138,15 @@ tier2:
     - "wget *"
     - "bash *"
     - "sh *"
+    - "zsh *"
+    - "find *-exec*"
+    - "find *-ok*"
+    - "find *-delete*"
+    - "find *-fprint*"
+    - "find *-fls*"
+    - "git *--ext-diff*"
+    - "git *--upload-pack*"
+    - "git *--receive-pack*"
+    - "git *--exec-path*"
+    - "git *--config-env*"
+    - "git *-c *"

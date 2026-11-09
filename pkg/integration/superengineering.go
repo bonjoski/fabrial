@@ -319,7 +319,9 @@ func SuperEngineering(targetDir string) (*Result, error) {
 		return nil, fmt.Errorf("failed to write temporary config %s: %w", tmpFile, err)
 	}
 	if err := os.Rename(tmpFile, configPath); err != nil {
-		_ = os.Remove(tmpFile)
+		if rmErr := os.Remove(tmpFile); rmErr != nil && !os.IsNotExist(rmErr) {
+			return nil, fmt.Errorf("failed to atomically rename config %s (%v): %w", configPath, rmErr, err)
+		}
 		return nil, fmt.Errorf("failed to atomically rename config %s: %w", configPath, err)
 	}
 
@@ -379,7 +381,9 @@ func SuperEngineeringGlobal() (*Result, error) {
 			// Keep entries[0], delete entries[1:]
 			for _, dup := range entries[1:] {
 				if dup.ID != "" {
-					_ = exec.Command(scPath, "commands", "delete", dup.ID, "--scope", "global").Run()
+					if delErr := exec.Command(scPath, "commands", "delete", dup.ID, "--scope", "global").Run(); delErr != nil {
+						// Best-effort duplicate cleanup
+					}
 				}
 			}
 			existingByName[name] = entries[:1]

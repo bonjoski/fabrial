@@ -16,7 +16,6 @@ func BuildEnvironment(sessionID SessionID, parentID SessionID, token string, pro
 	env := map[string]string{
 		"FABRIAL_SESSION_ACTIVE": "1",
 		"FABRIAL_SESSION_ID":     string(sessionID),
-		"AIRLOCK_ACTIVE":         "1",
 	}
 
 	if parentID != "" {

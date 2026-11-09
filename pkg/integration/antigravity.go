@@ -111,7 +111,9 @@ func Antigravity(targetDir string, isGlobal bool) (*AntigravityResult, error) {
 	}
 
 	if err := os.Rename(tmpFile, configPath); err != nil {
-		_ = os.Remove(tmpFile)
+		if rmErr := os.Remove(tmpFile); rmErr != nil && !os.IsNotExist(rmErr) {
+			return nil, fmt.Errorf("failed to atomically replace %s (%v): %w", configPath, rmErr, err)
+		}
 		return nil, fmt.Errorf("failed to atomically replace %s: %w", configPath, err)
 	}
 
@@ -119,9 +121,11 @@ func Antigravity(targetDir string, isGlobal bool) (*AntigravityResult, error) {
 	if isGlobal {
 		home, _ := os.UserHomeDir()
 		legacyPath := filepath.Join(home, ".gemini", "antigravity-cli", "mcp_servers.json")
-		_ = os.MkdirAll(filepath.Dir(legacyPath), 0755)
-		_ = os.Remove(legacyPath)
-		_ = os.Symlink(configPath, legacyPath)
+		if mkErr := os.MkdirAll(filepath.Dir(legacyPath), 0755); mkErr == nil {
+			if rmErr := os.Remove(legacyPath); rmErr == nil || os.IsNotExist(rmErr) {
+				_ = os.Symlink(configPath, legacyPath)
+			}
+		}
 	}
 
 	return result, nil

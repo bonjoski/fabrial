@@ -131,6 +131,7 @@ func TestAdversarial_DaemonAction_PathInjection(t *testing.T) {
 		t.Run(tc.path, func(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, tc.path, nil)
 			req.Host = "127.0.0.1:9191"
+			req.Header.Set("Authorization", "Bearer "+srv.AuthToken())
 			w := httptest.NewRecorder()
 
 			srv.Handler().ServeHTTP(w, req)
@@ -195,5 +196,39 @@ func TestAdversarial_SSE_ClientCapacityLimit(t *testing.T) {
 
 	if respRetry.StatusCode != http.StatusOK {
 		t.Fatalf("expected retried client to succeed with 200 after capacity freed, got: %d", respRetry.StatusCode)
+	}
+}
+
+// TestAdversarial_FAB07_MutatingEndpointsRequireBearerToken verifies that mutating /api/v1/*
+// endpoints require a valid 0600 server.token Bearer header and reject unauthenticated requests.
+func TestAdversarial_FAB07_MutatingEndpointsRequireBearerToken(t *testing.T) {
+	tokFile := t.TempDir() + "/server.token"
+	srv := NewServer(Config{TokenPath: tokFile})
+
+	endpoints := []string{
+		"/api/v1/doctor/fix",
+		"/api/v1/daemons/argus/stop",
+		"/api/v1/daemons/locksmith/restart",
+	}
+
+	for _, ep := range endpoints {
+		// 1. Missing Authorization header -> 401 Unauthorized
+		reqNoAuth := httptest.NewRequest(http.MethodPost, ep, nil)
+		reqNoAuth.Host = "127.0.0.1:9191"
+		wNoAuth := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(wNoAuth, reqNoAuth)
+		if wNoAuth.Code != http.StatusUnauthorized {
+			t.Fatalf("FAIL-OPEN (FAB-07): unauthenticated POST %s returned %d, want 401", ep, wNoAuth.Code)
+		}
+
+		// 2. Wrong Bearer token -> 401 Unauthorized
+		reqBad := httptest.NewRequest(http.MethodPost, ep, nil)
+		reqBad.Host = "127.0.0.1:9191"
+		reqBad.Header.Set("Authorization", "Bearer deadbeefbadtoken")
+		wBad := httptest.NewRecorder()
+		srv.Handler().ServeHTTP(wBad, reqBad)
+		if wBad.Code != http.StatusUnauthorized {
+			t.Fatalf("FAIL-OPEN (FAB-07): wrong-token POST %s returned %d, want 401", ep, wBad.Code)
+		}
 	}
 }
