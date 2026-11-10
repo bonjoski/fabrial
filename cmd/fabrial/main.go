@@ -23,6 +23,8 @@ import (
 	"github.com/bonjoski/fabrial/pkg/session"
 	"github.com/bonjoski/fabrial/pkg/supervisor"
 	"github.com/bonjoski/fabrial/pkg/version"
+	"github.com/bonjoski/stoneward/pkg/client"
+	"github.com/bonjoski/stoneward/pkg/policy"
 )
 
 func main() {
@@ -57,6 +59,9 @@ func main() {
 
 	case "auth":
 		handleAuth(args)
+
+	case "register":
+		handleRegister(args)
 
 	case "login":
 		handleAuth(append([]string{"login"}, args...))
@@ -849,10 +854,11 @@ func handleAuth(args []string) {
 	}
 }
 
-func handleAuthLogin(args []string) {
+func handleRegister(args []string) {
 	opts := auth.LoginOptions{
-		ServerURL: "https://localhost:9443",
-		Insecure:  false,
+		ServerURL:    "https://localhost:9443",
+		Insecure:     false,
+		UseLocksmith: true,
 	}
 
 	for i := 0; i < len(args); i++ {
@@ -872,6 +878,65 @@ func handleAuthLogin(args []string) {
 				opts.Password = args[i+1]
 				i++
 			}
+		case "--name", "--client-name":
+			if i+1 < len(args) {
+				opts.ClientName = args[i+1]
+				i++
+			}
+		case "--locksmith":
+			opts.UseLocksmith = true
+		case "--no-locksmith":
+			opts.UseLocksmith = false
+		case "--insecure-tls":
+			opts.Insecure = true
+		case "--insecure":
+			fmt.Fprintf(os.Stderr, "Error: --insecure is disallowed; pass --insecure-tls to explicitly bypass TLS verification\n")
+			os.Exit(1)
+		}
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+
+	fmt.Printf("Registering Fabrial Agent with Stoneward Cloud Control Plane at %s...\n", opts.ServerURL)
+	authCtx, bundle, toolchain, err := auth.Register(ctx, opts)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "❌ Agent registration failed: %v\n", err)
+		os.Exit(1)
+	}
+
+	printAuthSummary("registered agent client", authCtx, bundle, toolchain)
+}
+
+func handleAuthLogin(args []string) {
+	opts := auth.LoginOptions{
+		ServerURL:    "https://localhost:9443",
+		Insecure:     false,
+		UseLocksmith: true,
+	}
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "--server":
+			if i+1 < len(args) {
+				opts.ServerURL = args[i+1]
+				i++
+			}
+		case "--email":
+			if i+1 < len(args) {
+				opts.Email = args[i+1]
+				i++
+			}
+		case "--password":
+			if i+1 < len(args) {
+				opts.Password = args[i+1]
+				i++
+			}
+		case "--name", "--client-name":
+			if i+1 < len(args) {
+				opts.ClientName = args[i+1]
+				i++
+			}
 		case "--token":
 			if i+1 < len(args) {
 				opts.Token = args[i+1]
@@ -882,6 +947,10 @@ func handleAuthLogin(args []string) {
 				opts.TenantID = args[i+1]
 				i++
 			}
+		case "--locksmith":
+			opts.UseLocksmith = true
+		case "--no-locksmith":
+			opts.UseLocksmith = false
 		case "--insecure-tls":
 			opts.Insecure = true
 		case "--insecure":
@@ -900,15 +969,29 @@ func handleAuthLogin(args []string) {
 		os.Exit(1)
 	}
 
+	printAuthSummary("authenticated", authCtx, bundle, toolchain)
+}
+
+func printAuthSummary(verb string, authCtx *client.FabrialAuthContext, bundle *policy.PolicyBundle, toolchain *policy.ToolchainPolicies) {
 	fmt.Println(strings.Repeat("─", 75))
-	fmt.Printf("✔ Successfully authenticated as %s (%s)\n", authCtx.Name, authCtx.Email)
-	fmt.Printf("✔ Organization / Tenant: %s (ID: %s)\n", authCtx.OrgName, authCtx.TenantID)
-	fmt.Printf("✔ Role:                  %s\n", authCtx.Role)
-	tokenPreview := authCtx.Token
-	if len(tokenPreview) > 16 {
-		tokenPreview = tokenPreview[:16] + "..."
+	fmt.Printf("✔ Successfully %s as %s\n", verb, authCtx.Name)
+	if authCtx.Email != "" {
+		fmt.Printf("✔ User Account:          %s\n", authCtx.Email)
 	}
-	fmt.Printf("✔ Bearer Token:          %s (saved to ~/.fabrial/auth.json)\n", tokenPreview)
+	fmt.Printf("✔ Organization / Tenant: %s (ID: %s)\n", authCtx.OrgName, authCtx.TenantID)
+	fmt.Printf("✔ Role:                  %s (Least-Privilege Scoped)\n", authCtx.Role)
+	fmt.Printf("✔ Scopes:                telemetry:write, policy:read (cannot mutate policies or teams)\n")
+	if authCtx.TokenStorage == "locksmith" {
+		fmt.Printf("✔ Token Storage:         Sealed in Locksmith Hardware Enclave (%s)\n", authCtx.LocksmithKey)
+		fmt.Printf("                         - Biometric Amortization: Active (300s window; zero continuous prompts)\n")
+		fmt.Printf("                         - Zero plaintext tokens written to ~/.fabrial/auth.json\n")
+	} else {
+		tokenPreview := authCtx.Token
+		if len(tokenPreview) > 16 {
+			tokenPreview = tokenPreview[:16] + "..."
+		}
+		fmt.Printf("✔ Bearer Token:          %s (saved to ~/.fabrial/auth.json)\n", tokenPreview)
+	}
 	fmt.Printf("✔ Policy Bundle:         Version %d (verified Ed25519 signature)\n", bundle.Version)
 	fmt.Printf("✔ Toolchain Policies:    Synchronized across all 10 sovereign tools\n")
 	fmt.Printf("                         - Argus: %d allowed registries, %d blocked\n", len(toolchain.Argus.AllowedRegistries), len(toolchain.Argus.BlockedRegistries))
