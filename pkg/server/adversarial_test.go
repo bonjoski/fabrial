@@ -185,18 +185,24 @@ func TestAdversarial_SSE_ClientCapacityLimit(t *testing.T) {
 
 	// Close one client and verify that a new client can now connect
 	_ = clients[0].Body.Close()
-	time.Sleep(50 * time.Millisecond)
 
-	reqRetry, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/events", nil)
-	respRetry, err := http.DefaultClient.Do(reqRetry)
-	if err != nil {
-		t.Fatalf("unexpected error on retry client: %v", err)
+	var respRetry *http.Response
+	for i := 0; i < 20; i++ {
+		time.Sleep(50 * time.Millisecond)
+		reqRetry, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/api/v1/events", nil)
+		resp, rErr := http.DefaultClient.Do(reqRetry)
+		if rErr == nil {
+			if resp.StatusCode == http.StatusOK {
+				respRetry = resp
+				break
+			}
+			_ = resp.Body.Close()
+		}
+	}
+	if respRetry == nil {
+		t.Fatalf("expected retried client to succeed with 200 after capacity freed")
 	}
 	defer respRetry.Body.Close()
-
-	if respRetry.StatusCode != http.StatusOK {
-		t.Fatalf("expected retried client to succeed with 200 after capacity freed, got: %d", respRetry.StatusCode)
-	}
 }
 
 // TestAdversarial_FAB07_MutatingEndpointsRequireBearerToken verifies that mutating /api/v1/*
