@@ -231,3 +231,62 @@ func TestFabrial_Doctor_AegisboxSocketOffline(t *testing.T) {
 		t.Fatalf("expected Aegisbox in doctor JSON: %s", out)
 	}
 }
+
+func TestReadPasswordFrom_Terminal(t *testing.T) {
+	origReadPassword := readPasswordFn
+	defer func() { readPasswordFn = origReadPassword }()
+
+	readPasswordFn = func(fd int) ([]byte, error) {
+		return []byte("super-secret-pass"), nil
+	}
+
+	var out bytes.Buffer
+	pass, err := readPasswordFrom(strings.NewReader(""), 0, true, "Password: ", &out)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if pass != "super-secret-pass" {
+		t.Fatalf("expected 'super-secret-pass', got: %q", pass)
+	}
+
+	if !strings.Contains(out.String(), "Password: ") {
+		t.Fatalf("expected output to contain prompt, got: %q", out.String())
+	}
+}
+
+func TestReadPasswordFrom_PipedNonTerminal(t *testing.T) {
+	var out bytes.Buffer
+	input := strings.NewReader("piped-password-123\n")
+
+	pass, err := readPasswordFrom(input, 0, false, "Password: ", &out)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if pass != "piped-password-123" {
+		t.Fatalf("expected 'piped-password-123', got: %q", pass)
+	}
+
+	if !strings.Contains(out.String(), "Password: ") {
+		t.Fatalf("expected output to contain prompt, got: %q", out.String())
+	}
+}
+
+func TestReadTextFrom(t *testing.T) {
+	var out bytes.Buffer
+	input := strings.NewReader("user@example.com\n")
+
+	text, err := readTextFrom(input, "Email: ", &out)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if text != "user@example.com" {
+		t.Fatalf("expected 'user@example.com', got: %q", text)
+	}
+
+	if !strings.Contains(out.String(), "Email: ") {
+		t.Fatalf("expected output to contain prompt, got: %q", out.String())
+	}
+}

@@ -3,15 +3,19 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/signal"
 	"strings"
 	"syscall"
 	"time"
+
+	"golang.org/x/term"
 
 	"github.com/bonjoski/fabrial/pkg/auth"
 	"github.com/bonjoski/fabrial/pkg/circuitbreaker"
@@ -854,6 +858,67 @@ func handleAuth(args []string) {
 	}
 }
 
+var (
+	stdinReader    io.Reader = os.Stdin
+	stdinFd                  = int(os.Stdin.Fd())
+	isTerminalFunc           = term.IsTerminal
+	readPasswordFn           = term.ReadPassword
+)
+
+func isInputTerminal() bool {
+	return isTerminalFunc(stdinFd)
+}
+
+func promptPassword(prompt string) (string, error) {
+	return readPasswordFrom(stdinReader, stdinFd, isInputTerminal(), prompt, os.Stdout)
+}
+
+func promptText(prompt string) (string, error) {
+	return readTextFrom(stdinReader, prompt, os.Stdout)
+}
+
+func readPasswordFrom(r io.Reader, fd int, isTerm bool, prompt string, out io.Writer) (string, error) {
+	if prompt != "" && out != nil {
+		fmt.Fprint(out, prompt)
+	}
+
+	if isTerm {
+		passBytes, err := readPasswordFn(fd)
+		if out != nil {
+			fmt.Fprintln(out)
+		}
+		if err != nil {
+			return "", err
+		}
+		defer func() {
+			for i := range passBytes {
+				passBytes[i] = 0
+			}
+		}()
+		return strings.TrimRight(string(passBytes), "\r\n"), nil
+	}
+
+	// Non-terminal fallback (e.g. piped stdin)
+	reader := bufio.NewReader(r)
+	line, err := reader.ReadString('\n')
+	if err != nil && len(line) == 0 {
+		return "", err
+	}
+	return strings.TrimRight(line, "\r\n"), nil
+}
+
+func readTextFrom(r io.Reader, prompt string, out io.Writer) (string, error) {
+	if prompt != "" && out != nil {
+		fmt.Fprint(out, prompt)
+	}
+	reader := bufio.NewReader(r)
+	line, err := reader.ReadString('\n')
+	if err != nil && len(line) == 0 {
+		return "", err
+	}
+	return strings.TrimSpace(line), nil
+}
+
 func handleRegister(args []string) {
 	opts := auth.LoginOptions{
 		ServerURL:    "https://localhost:9443",
@@ -893,6 +958,24 @@ func handleRegister(args []string) {
 			fmt.Fprintf(os.Stderr, "Error: --insecure is disallowed; pass --insecure-tls to explicitly bypass TLS verification\n")
 			os.Exit(1)
 		}
+	}
+
+	if opts.Email == "" && isInputTerminal() {
+		email, err := promptText("Email: ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading email: %v\n", err)
+			os.Exit(1)
+		}
+		opts.Email = email
+	}
+
+	if opts.Password == "" && (opts.Email != "" || isInputTerminal()) {
+		pass, err := promptPassword("Password: ")
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Error reading password: %v\n", err)
+			os.Exit(1)
+		}
+		opts.Password = pass
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -956,6 +1039,28 @@ func handleAuthLogin(args []string) {
 		case "--insecure":
 			fmt.Fprintf(os.Stderr, "Error: --insecure is disallowed; pass --insecure-tls to explicitly bypass TLS verification\n")
 			os.Exit(1)
+		}
+	}
+
+	// If no token was provided, authenticate via email/password.
+	// If password wasn't provided on command line, prompt securely for it.
+	if opts.Token == "" {
+		if opts.Email == "" && isInputTerminal() {
+			email, err := promptText("Email: ")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error reading email: %v\n", err)
+				os.Exit(1)
+			}
+			opts.Email = email
+		}
+
+		if opts.Password == "" && (opts.Email != "" || isInputTerminal()) {
+			pass, err := promptPassword("Password: ")
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Error reading password: %v\n", err)
+				os.Exit(1)
+			}
+			opts.Password = pass
 		}
 	}
 

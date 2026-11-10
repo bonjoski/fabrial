@@ -1,4 +1,7 @@
-.PHONY: all build test clean install doctor
+PREFIX ?= $(HOME)/.local
+BINDIR ?= $(PREFIX)/bin
+
+.PHONY: all build test clean install uninstall doctor
 
 VERSION ?= $(shell cat VERSION 2>/dev/null || echo "0.2.0")
 COMMIT ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo "dev")
@@ -22,8 +25,11 @@ doctor: build
 	./bin/fabrial doctor
 
 install: build
-	install -d /usr/local/bin
-	install -m 755 bin/fabrial /usr/local/bin/fabrial
+	install -d $(DESTDIR)$(BINDIR)
+	install -m 755 bin/fabrial $(DESTDIR)$(BINDIR)/fabrial
+
+uninstall:
+	rm -f $(DESTDIR)$(BINDIR)/fabrial
 
 clean:
 	rm -rf bin/
