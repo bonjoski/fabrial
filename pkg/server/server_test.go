@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -198,7 +199,7 @@ func TestServer_SocketLifecycle(t *testing.T) {
 	if fi.Mode()&os.ModeSocket == 0 {
 		t.Fatalf("expected mode socket, got: %v", fi.Mode())
 	}
-	if fi.Mode().Perm() != 0600 {
+	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0600 {
 		t.Fatalf("expected socket permissions 0600, got: %04o", fi.Mode().Perm())
 	}
 

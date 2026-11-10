@@ -6,6 +6,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -76,12 +77,14 @@ func TestDoctor_SocketSecurityVerification(t *testing.T) {
 	}
 
 	// Insecure permissions 0666 (group/world writable)
-	_ = os.Chmod(sockPath, 0666)
-	ok, reason = VerifySocketSecurity(sockPath)
-	if ok {
-		t.Fatalf("expected 0666 socket to fail security check")
-	}
-	if !strings.Contains(reason, "insecure permissions") {
-		t.Errorf("expected insecure permissions reason, got: %s", reason)
+	if runtime.GOOS != "windows" {
+		_ = os.Chmod(sockPath, 0666)
+		ok, reason = VerifySocketSecurity(sockPath)
+		if ok {
+			t.Fatalf("expected 0666 socket to fail security check")
+		}
+		if !strings.Contains(reason, "insecure permissions") {
+			t.Errorf("expected insecure permissions reason, got: %s", reason)
+		}
 	}
 }

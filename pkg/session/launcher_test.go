@@ -3,11 +3,15 @@ package session
 import (
 	"context"
 	"os"
+	"runtime"
 	"testing"
 	"time"
 )
 
 func TestLauncher_SessionLaunch(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping session launch test on windows: requires /bin/sh")
+	}
 	sm := NewSessionManager()
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()

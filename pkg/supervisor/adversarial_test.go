@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -81,6 +82,9 @@ func TestAdversarial_PIDFileTampering_Symlink(t *testing.T) {
 }
 
 func TestAdversarial_PIDFileTampering_InsecurePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping POSIX file permission checks on windows")
+	}
 	tempDir := t.TempDir()
 	pidFile := filepath.Join(tempDir, "insecure.pid")
 	if err := os.WriteFile(pidFile, []byte("99999\n"), 0777); err != nil {
