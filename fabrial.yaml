@@ -35,6 +35,8 @@ tier1:
     - biome
     - clippy
     - rustfmt
+    # Cognitive Brain & Memory Runtime
+    - coppermind
     # Read-Only Inspection & Version Control
     - git diff
     - git status
@@ -51,6 +53,7 @@ tier1:
     - echo
     - which
   patterns:
+    - "coppermind *"
     - "*lint*"
     - "*format*"
     - "*prettier*"
