@@ -6,6 +6,7 @@
 **Give autonomous coding agents the freedom to build without giving them the keys to your kingdom.**
 
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
+[![SLSA 2](https://slsa.dev/images/gh-badge-level2.svg)](https://slsa.dev)
 [![Go Version](https://img.shields.io/badge/go-1.27%2B-00ADD8.svg?logo=go)](https://golang.org)
 [![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-lightgrey.svg)](https://github.com/bonjoski/fabrial)
 [![Zero-SaaS](https://img.shields.io/badge/SaaS-Zero%20(100%25%20Local)-blueviolet.svg)](#-zero-saas-self-sovereignty)
@@ -302,6 +303,22 @@ Prints version and status of the unified security fabric.
 2. **Fail-Closed by Design**: If peer attestation fails, if a socket permission is insecure (non-`0600`), or if microVM initialization encounters an error, execution halts immediately.
 3. **Anti-PID Recycling**: Peer attestation checks verify both PID and process start-time ticks via the kernel (`LOCAL_PEERPID` / proc status), defeating PID recycling attacks.
 4. **Active Scavenging**: If an agent process crashes or is killed with `SIGKILL`, Locksmith’s resident scavenger actively detects the dead PID and revokes its credentials.
+
+---
+
+## 🔏 SLSA Provenance & Verification
+
+Fabrial adheres to the **SLSA v1.0** specification.
+
+Verify provenance with GitHub CLI:
+```bash
+gh attestation verify fabrial --repo bonjoski/fabrial
+```
+
+Or verify offline using Soulcaster:
+```bash
+soulcaster verify --attestation fabrial.intoto.jsonl bin/fabrial
+```
 
 ---
 

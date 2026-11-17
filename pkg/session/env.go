@@ -44,10 +44,17 @@ func BuildEnvironment(sessionID SessionID, parentID SessionID, token string, pro
 
 	// Ambient Stoneward Control Plane Authentication Injection
 	if auth, err := client.LoadFabrialAuth(); err == nil && auth != nil && auth.IsValid() {
-		tok, _ := auth.ResolveToken()
-		if tok != "" {
-			env["FABRIAL_AUTH_TOKEN"] = tok
-			env["STONEWARD_TOKEN"] = tok
+		// Only inject token if available in plaintext or non-interactive store.
+		// Never trigger interactive biometric Locksmith prompts during ambient environment construction.
+		if auth.Token != "" {
+			env["FABRIAL_AUTH_TOKEN"] = auth.Token
+			env["STONEWARD_TOKEN"] = auth.Token
+		} else if auth.TokenStorage != "locksmith" {
+			tok, _ := auth.ResolveToken()
+			if tok != "" {
+				env["FABRIAL_AUTH_TOKEN"] = tok
+				env["STONEWARD_TOKEN"] = tok
+			}
 		}
 		env["STONEWARD_TENANT_ID"] = auth.TenantID
 		env["STONEWARD_SERVER_URL"] = auth.ServerURL
