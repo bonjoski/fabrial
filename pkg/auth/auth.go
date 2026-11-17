@@ -10,9 +10,6 @@ import (
 	"net/http"
 	"strings"
 	"time"
-
-	"github.com/bonjoski/stoneward/pkg/client"
-	"github.com/bonjoski/stoneward/pkg/policy"
 )
 
 var (
@@ -47,13 +44,13 @@ func NewTLSConfig(insecure bool) *tls.Config {
 
 // Login authenticates Fabrial against the Stoneward cloud control plane,
 // pulls down the latest signed policy bundle, and persists credentials.
-func Login(ctx context.Context, opts LoginOptions) (*client.FabrialAuthContext, *policy.PolicyBundle, *policy.ToolchainPolicies, error) {
+func Login(ctx context.Context, opts LoginOptions) (*FabrialAuthContext, *PolicyBundle, *ToolchainPolicies, error) {
 	serverURL := strings.TrimRight(opts.ServerURL, "/")
 	if serverURL == "" {
 		serverURL = "https://localhost:9443"
 	}
 
-	var authCtx client.FabrialAuthContext
+	var authCtx FabrialAuthContext
 	authCtx.ServerURL = serverURL
 
 	tr := &http.Transport{
@@ -149,7 +146,7 @@ func Login(ctx context.Context, opts LoginOptions) (*client.FabrialAuthContext, 
 	// 2. Locksmith Hardware Enclave Storage with Biometric Amortization
 	if opts.UseLocksmith {
 		lockKey := "stoneward_agent_token"
-		if err := client.StoreLocksmithSecret(lockKey, rawToken); err == nil {
+		if err := StoreLocksmithSecret(lockKey, rawToken); err == nil {
 			authCtx.TokenStorage = "locksmith"
 			authCtx.LocksmithKey = lockKey
 			authCtx.Token = "" // Zero plaintext token before serializing to disk
@@ -161,16 +158,16 @@ func Login(ctx context.Context, opts LoginOptions) (*client.FabrialAuthContext, 
 		authCtx.Token = rawToken
 		authCtx.TokenStorage = "file"
 	}
-	client.SetCachedToken(rawToken, 5*time.Minute)
+	SetCachedToken(rawToken, 5*time.Minute)
 
 	// 3. Pull down and cryptographically verify the policy bundle
-	bundle, toolchain, err := client.PullAndVerifyPolicy(serverURL, rawToken, authCtx.TenantID, opts.Insecure)
+	bundle, toolchain, err := PullAndVerifyPolicy(serverURL, rawToken, authCtx.TenantID, opts.Insecure)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to synchronize policy bundle: %w", err)
 	}
 
 	// 4. Persist authenticated session
-	if err := client.SaveFabrialAuth(&authCtx); err != nil {
+	if err := SaveFabrialAuth(&authCtx); err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to persist auth credentials: %w", err)
 	}
 
@@ -179,7 +176,7 @@ func Login(ctx context.Context, opts LoginOptions) (*client.FabrialAuthContext, 
 
 // Register dynamically registers a new Fabrial agent client, issues an agent token,
 // seals it in Locksmith, and synchronizes the latest signed policy bundle.
-func Register(ctx context.Context, opts LoginOptions) (*client.FabrialAuthContext, *policy.PolicyBundle, *policy.ToolchainPolicies, error) {
+func Register(ctx context.Context, opts LoginOptions) (*FabrialAuthContext, *PolicyBundle, *ToolchainPolicies, error) {
 	serverURL := strings.TrimRight(opts.ServerURL, "/")
 	if serverURL == "" {
 		serverURL = "https://localhost:9443"
@@ -194,7 +191,7 @@ func Register(ctx context.Context, opts LoginOptions) (*client.FabrialAuthContex
 		clientName = "Fabrial Workstation"
 	}
 
-	var authCtx client.FabrialAuthContext
+	var authCtx FabrialAuthContext
 	authCtx.ServerURL = serverURL
 
 	tr := &http.Transport{
@@ -265,7 +262,7 @@ func Register(ctx context.Context, opts LoginOptions) (*client.FabrialAuthContex
 	// Locksmith Hardware Enclave Storage with Biometric Amortization
 	if opts.UseLocksmith {
 		lockKey := "stoneward_agent_token"
-		if err := client.StoreLocksmithSecret(lockKey, rawToken); err == nil {
+		if err := StoreLocksmithSecret(lockKey, rawToken); err == nil {
 			authCtx.TokenStorage = "locksmith"
 			authCtx.LocksmithKey = lockKey
 			authCtx.Token = "" // Zero plaintext token before serializing
@@ -277,14 +274,14 @@ func Register(ctx context.Context, opts LoginOptions) (*client.FabrialAuthContex
 		authCtx.Token = rawToken
 		authCtx.TokenStorage = "file"
 	}
-	client.SetCachedToken(rawToken, 5*time.Minute)
+	SetCachedToken(rawToken, 5*time.Minute)
 
-	bundle, toolchain, err := client.PullAndVerifyPolicy(serverURL, rawToken, authCtx.TenantID, opts.Insecure)
+	bundle, toolchain, err := PullAndVerifyPolicy(serverURL, rawToken, authCtx.TenantID, opts.Insecure)
 	if err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to synchronize policy bundle: %w", err)
 	}
 
-	if err := client.SaveFabrialAuth(&authCtx); err != nil {
+	if err := SaveFabrialAuth(&authCtx); err != nil {
 		return nil, nil, nil, fmt.Errorf("failed to persist auth credentials: %w", err)
 	}
 
@@ -292,24 +289,24 @@ func Register(ctx context.Context, opts LoginOptions) (*client.FabrialAuthContex
 }
 
 // Status returns current authentication context and cached policy status.
-func Status() (*client.FabrialAuthContext, *policy.PolicyBundle, error) {
-	authCtx, err := client.LoadFabrialAuth()
+func Status() (*FabrialAuthContext, *PolicyBundle, error) {
+	authCtx, err := LoadFabrialAuth()
 	if err != nil {
 		return nil, nil, err
 	}
 
-	bundle, _, _ := client.LoadCachedPolicy()
+	bundle, _, _ := LoadCachedPolicy()
 	return authCtx, bundle, nil
 }
 
 // Logout revokes and clears local authentication state.
 func Logout() error {
-	return client.ClearFabrialAuth()
+	return ClearFabrialAuth()
 }
 
 // PullPolicy synchronizes the latest signed policy bundle using the active authentication token.
-func PullPolicy(insecure bool) (*policy.PolicyBundle, *policy.ToolchainPolicies, error) {
-	authCtx, err := client.LoadFabrialAuth()
+func PullPolicy(insecure bool) (*PolicyBundle, *ToolchainPolicies, error) {
+	authCtx, err := LoadFabrialAuth()
 	if err != nil {
 		return nil, nil, fmt.Errorf("cannot pull policy: %w", err)
 	}
@@ -319,5 +316,5 @@ func PullPolicy(insecure bool) (*policy.PolicyBundle, *policy.ToolchainPolicies,
 		return nil, nil, fmt.Errorf("cannot resolve token: %w", err)
 	}
 
-	return client.PullAndVerifyPolicy(authCtx.ServerURL, tok, authCtx.TenantID, insecure)
+	return PullAndVerifyPolicy(authCtx.ServerURL, tok, authCtx.TenantID, insecure)
 }

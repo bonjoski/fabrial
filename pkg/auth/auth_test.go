@@ -1,4 +1,4 @@
-package auth
+package auth_test
 
 import (
 	"context"
@@ -11,9 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/bonjoski/fabrial/pkg/auth"
 	"github.com/bonjoski/fabrial/pkg/session"
-	"github.com/bonjoski/stoneward/pkg/client"
-	"github.com/bonjoski/stoneward/pkg/policy"
 )
 
 func TestAuth_LoginStatusLogout(t *testing.T) {
@@ -32,12 +31,12 @@ func TestAuth_LoginStatusLogout(t *testing.T) {
 	}
 	_ = pub
 
-	bundle := &policy.PolicyBundle{
+	bundle := &auth.PolicyBundle{
 		TenantID:   "tenant-bonjo",
 		Version:    1,
 		CreatedAt:  time.Now().UTC(),
 		ValidUntil: time.Now().UTC().Add(48 * time.Hour),
-		Rule: policy.PolicyRule{
+		Rule: auth.PolicyRule{
 			AllowedTools:     []string{"read_file", "git_status"},
 			BlockedSyscalls:  []string{"ptrace", "reboot"},
 			BlockLoopbackNet: true,
@@ -46,7 +45,7 @@ func TestAuth_LoginStatusLogout(t *testing.T) {
 	if err := bundle.Sign(priv); err != nil {
 		t.Fatalf("failed to sign bundle: %v", err)
 	}
-	toolchain := policy.DefaultToolchainPolicies()
+	toolchain := auth.DefaultToolchainPolicies()
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -84,13 +83,13 @@ func TestAuth_LoginStatusLogout(t *testing.T) {
 	defer srv.Close()
 
 	// 2. Test initial status is unauthenticated
-	_, _, err = Status()
+	_, _, err = auth.Status()
 	if err == nil {
 		t.Fatal("expected Status to return error when unauthenticated")
 	}
 
 	// 3. Test Login
-	authCtx, pulledBundle, pulledTools, err := Login(context.Background(), LoginOptions{
+	authCtx, pulledBundle, pulledTools, err := auth.Login(context.Background(), auth.LoginOptions{
 		ServerURL: srv.URL,
 		Email:     "ben@bonjo.dev",
 		Password:  "correct-pass",
@@ -114,7 +113,7 @@ func TestAuth_LoginStatusLogout(t *testing.T) {
 	}
 
 	// 4. Test Status after login
-	statusAuth, statusBundle, err := Status()
+	statusAuth, statusBundle, err := auth.Status()
 	if err != nil {
 		t.Fatalf("Status failed after login: %v", err)
 	}
@@ -135,7 +134,7 @@ func TestAuth_LoginStatusLogout(t *testing.T) {
 	}
 
 	// 6. Test Policy Pull
-	rePulledBundle, _, err := PullPolicy(true)
+	rePulledBundle, _, err := auth.PullPolicy(true)
 	if err != nil {
 		t.Fatalf("PullPolicy failed: %v", err)
 	}
@@ -144,10 +143,10 @@ func TestAuth_LoginStatusLogout(t *testing.T) {
 	}
 
 	// 7. Test Logout
-	if err := Logout(); err != nil {
+	if err := auth.Logout(); err != nil {
 		t.Fatalf("Logout failed: %v", err)
 	}
-	if client.IsFabrialAuthenticated() {
+	if auth.IsFabrialAuthenticated() {
 		t.Fatal("expected IsFabrialAuthenticated to be false after logout")
 	}
 }

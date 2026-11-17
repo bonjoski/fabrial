@@ -6,7 +6,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/bonjoski/stoneward/pkg/client"
+	"github.com/bonjoski/fabrial/pkg/auth"
 )
 
 var validEnvKeyRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
@@ -43,23 +43,23 @@ func BuildEnvironment(sessionID SessionID, parentID SessionID, token string, pro
 	}
 
 	// Ambient Stoneward Control Plane Authentication Injection
-	if auth, err := client.LoadFabrialAuth(); err == nil && auth != nil && auth.IsValid() {
+	if authCtx, err := auth.LoadFabrialAuth(); err == nil && authCtx != nil && authCtx.IsValid() {
 		// Only inject token if available in plaintext or non-interactive store.
 		// Never trigger interactive biometric Locksmith prompts during ambient environment construction.
-		if auth.Token != "" {
-			env["FABRIAL_AUTH_TOKEN"] = auth.Token
-			env["STONEWARD_TOKEN"] = auth.Token
-		} else if auth.TokenStorage != "locksmith" {
-			tok, _ := auth.ResolveToken()
+		if authCtx.Token != "" {
+			env["FABRIAL_AUTH_TOKEN"] = authCtx.Token
+			env["STONEWARD_TOKEN"] = authCtx.Token
+		} else if authCtx.TokenStorage != "locksmith" {
+			tok, _ := authCtx.ResolveToken()
 			if tok != "" {
 				env["FABRIAL_AUTH_TOKEN"] = tok
 				env["STONEWARD_TOKEN"] = tok
 			}
 		}
-		env["STONEWARD_TENANT_ID"] = auth.TenantID
-		env["STONEWARD_SERVER_URL"] = auth.ServerURL
-		if auth.UserID != "" {
-			env["STONEWARD_USER_ID"] = auth.UserID
+		env["STONEWARD_TENANT_ID"] = authCtx.TenantID
+		env["STONEWARD_SERVER_URL"] = authCtx.ServerURL
+		if authCtx.UserID != "" {
+			env["STONEWARD_USER_ID"] = authCtx.UserID
 		}
 	}
 

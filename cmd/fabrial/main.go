@@ -27,8 +27,6 @@ import (
 	"github.com/bonjoski/fabrial/pkg/session"
 	"github.com/bonjoski/fabrial/pkg/supervisor"
 	"github.com/bonjoski/fabrial/pkg/version"
-	"github.com/bonjoski/stoneward/pkg/client"
-	"github.com/bonjoski/stoneward/pkg/policy"
 )
 
 func main() {
@@ -1077,7 +1075,7 @@ func handleAuthLogin(args []string) {
 	printAuthSummary("authenticated", authCtx, bundle, toolchain)
 }
 
-func printAuthSummary(verb string, authCtx *client.FabrialAuthContext, bundle *policy.PolicyBundle, toolchain *policy.ToolchainPolicies) {
+func printAuthSummary(verb string, authCtx *auth.FabrialAuthContext, bundle *auth.PolicyBundle, toolchain *auth.ToolchainPolicies) {
 	fmt.Println(strings.Repeat("─", 75))
 	fmt.Printf("✔ Successfully %s as %s\n", verb, authCtx.Name)
 	if authCtx.Email != "" {
