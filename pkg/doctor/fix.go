@@ -354,7 +354,15 @@ func (f *Fixer) fixAegisbox(ctx context.Context) []FixAction {
 		}
 	}
 
-	if _, findErr := router.FindExecutable("aegisbox"); findErr == nil && f.daemonManager != nil {
+	hasAegisbox := false
+	if _, err := router.FindExecutable("aegisbox"); err == nil {
+		hasAegisbox = true
+	}
+	if _, err := router.FindExecutable("aegisboxd"); err == nil {
+		hasAegisbox = true
+	}
+
+	if hasAegisbox && f.daemonManager != nil {
 		if startErr := f.daemonManager.Start(ctx, "Aegisbox"); startErr == nil {
 			if f.waitForSocket(ctx, sock, 3*time.Second) {
 				actions = append(actions, FixAction{
@@ -364,11 +372,19 @@ func (f *Fixer) fixAegisbox(ctx context.Context) []FixAction {
 					Details:     sock,
 				})
 			} else {
+				details := sock
+				logPath := filepath.Join(aegisDir, "aegisboxd.log")
+				if data, lErr := os.ReadFile(logPath); lErr == nil && len(data) > 0 {
+					lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+					if len(lines) > 0 {
+						details = fmt.Sprintf("%s (log: %s)", sock, lines[len(lines)-1])
+					}
+				}
 				actions = append(actions, FixAction{
 					Pillar:      PillarAegisbox,
 					Description: "Started Aegisbox daemon but socket did not respond within timeout",
 					Success:     false,
-					Details:     sock,
+					Details:     details,
 				})
 			}
 		} else {

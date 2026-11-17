@@ -264,6 +264,17 @@ func (s *Supervisor) StartService(ctx context.Context, def ServiceDef) ServiceSt
 
 	// 2. Discover binary
 	bin, err := router.FindExecutable(def.BinaryName)
+	if def.Name == "Aegisbox" {
+		// Prefer launching resident aegisboxd directly with --allow-degraded-local fallback if available
+		if aegisboxdBin, dErr := router.FindExecutable("aegisboxd"); dErr == nil {
+			bin = aegisboxdBin
+			err = nil
+			def.StartArgs = []string{"--allow-degraded-local"}
+			if def.LogFile == "" && def.PIDFile != "" {
+				def.LogFile = filepath.Join(filepath.Dir(def.PIDFile), "aegisboxd.log")
+			}
+		}
+	}
 	if err != nil {
 		return ServiceStatus{
 			Name:    def.Name,
