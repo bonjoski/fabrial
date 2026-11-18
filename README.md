@@ -68,6 +68,22 @@ fabrial exec --profile agent --microvm -- python3 untrusted_script.py
 
 ---
 
+## 💡 Core Use Cases & Recipes
+
+Every major use case for Fabrial is backed by dedicated, task-oriented recipes in [**`docs/use-cases/`**](docs/use-cases/README.md):
+
+| Use Case | Scenario & Quick Recipe | Full Guide |
+| :--- | :--- | :--- |
+| **Transparent Agent Command Routing** | Automatically dispatch linters to <15ms kernel sandboxes and package installs to microVMs:<br/>`fabrial run npm install lodash` | [Guide](docs/use-cases/01-transparent-command-routing.md) |
+| **Ambient Session Brokerage** | Start an isolated dev session with scoped credentials and zero Hop Tax:<br/>`eval $(fabrial session begin --ttl 30m --scopes read,build)` | [Guide](docs/use-cases/02-ambient-session-broker.md) |
+| **Multi-Agent Sub-Sessions ($N=8$)** | Run parallel subagents across git worktrees without port or lock contention:<br/>`fabrial session child --parent $SES_ID --task "refactor"` | [Guide](docs/use-cases/03-multi-agent-subsessions.md) |
+| **Real-Time Circuit Breaker Killswitch** | Instantly terminate compromised process trees upon security alerts:<br/>`fabrial circuit-breaker status && fabrial circuit-breaker trip` | [Guide](docs/use-cases/04-circuit-breaker-killswitch.md) |
+| **IDE & AI Coding Agent Integration** | Seamlessly hook Fabrial into Claude Code CLI, Cursor, and Antigravity:<br/>`fabrial integrate antigravity --global` | [Guide](docs/use-cases/05-ide-sidecar-integration.md) |
+
+---
+
+---
+
 ## 🚨 The Agent Security Dilemma
 
 Autonomous AI coding agents need shell execution to run tests, compile code, and install dependencies. However, granting an LLM raw subshell access creates severe attack vectors:
