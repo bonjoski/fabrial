@@ -9,8 +9,8 @@ import (
 
 func TestDefaultCommands(t *testing.T) {
 	cmds := DefaultCommands()
-	if len(cmds) != 8 {
-		t.Fatalf("expected 8 default commands, got %d", len(cmds))
+	if len(cmds) != 2 {
+		t.Fatalf("expected 2 default commands, got %d", len(cmds))
 	}
 
 	cmdMap := make(map[string]CustomCommand)
@@ -24,58 +24,28 @@ func TestDefaultCommands(t *testing.T) {
 		cmdMap[c.Name] = c
 	}
 
-	// Verify fabrial-doctor uses fabrial doctor --fix
-	fabrial, ok := cmdMap["fabrial-doctor"]
+	// Verify stack-doctor uses fabrial doctor --fix
+	doc, ok := cmdMap["stack-doctor"]
 	if !ok {
-		t.Fatal("fabrial-doctor command missing")
+		t.Fatal("stack-doctor command missing")
 	}
-	if fabrial.Command != "fabrial doctor --fix" {
-		t.Errorf("expected fabrial-doctor command to be 'fabrial doctor --fix', got %q", fabrial.Command)
+	if doc.Command != "fabrial doctor --fix" {
+		t.Errorf("expected stack-doctor command to be 'fabrial doctor --fix', got %q", doc.Command)
+	}
+	if doc.Icon != "🩺" {
+		t.Errorf("expected stack-doctor icon to be '🩺', got %q", doc.Icon)
 	}
 
-	// Verify airlock-status uses airlock doctor
-	airlock, ok := cmdMap["airlock-status"]
+	// Verify pre-flight uses argus vet --diff && soulcaster verify-patch -base HEAD
+	pf, ok := cmdMap["pre-flight"]
 	if !ok {
-		t.Fatal("airlock-status command missing")
+		t.Fatal("pre-flight command missing")
 	}
-	if airlock.Command != "airlock doctor" {
-		t.Errorf("expected airlock-status command to be 'airlock doctor', got %q", airlock.Command)
+	if pf.Command != "argus vet --diff && soulcaster verify-patch -base HEAD" {
+		t.Errorf("expected pre-flight command to be 'argus vet --diff && soulcaster verify-patch -base HEAD', got %q", pf.Command)
 	}
-
-	// Verify argus-audit uses argus vet --diff
-	argus, ok := cmdMap["argus-audit"]
-	if !ok {
-		t.Fatal("argus-audit command missing")
-	}
-	if argus.Command != "argus vet --diff" {
-		t.Errorf("expected argus-audit command to be 'argus vet --diff', got %q", argus.Command)
-	}
-
-	// Verify shield-status uses shield status
-	shield, ok := cmdMap["shield-status"]
-	if !ok {
-		t.Fatal("shield-status command missing")
-	}
-	if shield.Command != "shield status" {
-		t.Errorf("expected shield-status command to be 'shield status', got %q", shield.Command)
-	}
-
-	// Verify conjoiner-check uses fabrial session list
-	conjoiner, ok := cmdMap["conjoiner-check"]
-	if !ok {
-		t.Fatal("conjoiner-check command missing")
-	}
-	if conjoiner.Command != "fabrial session list" {
-		t.Errorf("expected conjoiner-check command to be 'fabrial session list', got %q", conjoiner.Command)
-	}
-
-	// Verify soulcaster-verify uses soulcaster verify-patch -base HEAD
-	soulcaster, ok := cmdMap["soulcaster-verify"]
-	if !ok {
-		t.Fatal("soulcaster-verify command missing")
-	}
-	if soulcaster.Command != "soulcaster verify-patch -base HEAD" {
-		t.Errorf("expected soulcaster-verify command to be 'soulcaster verify-patch -base HEAD', got %q", soulcaster.Command)
+	if pf.Icon != "🛡️" {
+		t.Errorf("expected pre-flight icon to be '🛡️', got %q", pf.Icon)
 	}
 
 	// Ensure private security-audit is NOT present in public default commands
@@ -95,8 +65,8 @@ func TestSuperEngineering_FreshDirectory(t *testing.T) {
 	if !res.Created {
 		t.Errorf("expected Created to be true on fresh directory")
 	}
-	if len(res.CommandsAdded) != 8 {
-		t.Errorf("expected 8 commands added, got %d", len(res.CommandsAdded))
+	if len(res.CommandsAdded) != 2 {
+		t.Errorf("expected 2 commands added, got %d: %v", len(res.CommandsAdded), res.CommandsAdded)
 	}
 	if len(res.SetupAdded) != 1 || res.SetupAdded[0] != "fabrial doctor" {
 		t.Errorf("unexpected SetupAdded: %v", res.SetupAdded)
@@ -123,8 +93,8 @@ func TestSuperEngineering_FreshDirectory(t *testing.T) {
 	}
 
 	cmdList := parsed["commands"].([]interface{})
-	if len(cmdList) != 8 {
-		t.Errorf("expected 8 commands in JSON, got %d", len(cmdList))
+	if len(cmdList) != 2 {
+		t.Errorf("expected 2 commands in JSON, got %d", len(cmdList))
 	}
 
 	// Verify specific command contents in JSON
@@ -134,14 +104,101 @@ func TestSuperEngineering_FreshDirectory(t *testing.T) {
 		cmdMap[m["name"].(string)] = m
 	}
 
-	if airlock, ok := cmdMap["airlock-status"]; !ok || airlock["command"] != "airlock doctor" {
-		t.Errorf("expected airlock-status to have command 'airlock doctor', got %v", airlock["command"])
+	if doc, ok := cmdMap["stack-doctor"]; !ok || doc["command"] != "fabrial doctor --fix" {
+		t.Errorf("expected stack-doctor to have command 'fabrial doctor --fix', got %v", doc["command"])
 	}
-	if argus, ok := cmdMap["argus-audit"]; !ok || argus["command"] != "argus vet --diff" {
-		t.Errorf("expected argus-audit to have command 'argus vet --diff', got %v", argus["command"])
+	if pf, ok := cmdMap["pre-flight"]; !ok || pf["command"] != "argus vet --diff && soulcaster verify-patch -base HEAD" {
+		t.Errorf("expected pre-flight to have command 'argus vet --diff && soulcaster verify-patch -base HEAD', got %v", pf["command"])
 	}
-	if shield, ok := cmdMap["shield-status"]; !ok || shield["command"] != "shield status" {
-		t.Errorf("expected shield-status to have command 'shield status', got %v", shield["command"])
+}
+
+func TestSuperEngineering_PrunesDeprecatedCommands(t *testing.T) {
+	tempDir := t.TempDir()
+	configDir := filepath.Join(tempDir, ".super.engineering")
+	if err := os.MkdirAll(configDir, 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	existingJSON := `{
+  "commands": [
+    {
+      "id": "old-doc",
+      "name": "fabrial-doctor",
+      "command": "fabrial doctor"
+    },
+    {
+      "id": "old-airlock",
+      "name": "airlock-status",
+      "command": "airlock doctor"
+    },
+    {
+      "id": "old-shield",
+      "name": "shield-status",
+      "command": "shield status"
+    },
+    {
+      "id": "old-argus",
+      "name": "argus-audit",
+      "command": "argus daemon status"
+    },
+    {
+      "id": "keep-custom",
+      "name": "security-audit",
+      "command": "sentinel review"
+    }
+  ]
+}`
+	if err := os.WriteFile(filepath.Join(configDir, "config.json"), []byte(existingJSON), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	res, err := SuperEngineering(tempDir)
+	if err != nil {
+		t.Fatalf("SuperEngineering failed: %v", err)
+	}
+
+	if len(res.CommandsRemoved) != 4 {
+		t.Errorf("expected 4 deprecated commands removed, got %d: %v", len(res.CommandsRemoved), res.CommandsRemoved)
+	}
+	if len(res.CommandsAdded) != 2 {
+		t.Errorf("expected 2 default commands added, got %d: %v", len(res.CommandsAdded), res.CommandsAdded)
+	}
+
+	data, err := os.ReadFile(filepath.Join(configDir, "config.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed map[string]interface{}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatal(err)
+	}
+
+	cmdList := parsed["commands"].([]interface{})
+	// Total commands: 1 preserved custom ("security-audit") + 2 defaults = 3
+	if len(cmdList) != 3 {
+		t.Fatalf("expected 3 commands in JSON, got %d: %v", len(cmdList), cmdList)
+	}
+
+	cmdMap := make(map[string]map[string]interface{})
+	for _, raw := range cmdList {
+		m := raw.(map[string]interface{})
+		cmdMap[m["name"].(string)] = m
+	}
+
+	if _, exists := cmdMap["fabrial-doctor"]; exists {
+		t.Errorf("fabrial-doctor should have been pruned")
+	}
+	if _, exists := cmdMap["airlock-status"]; exists {
+		t.Errorf("airlock-status should have been pruned")
+	}
+	if _, exists := cmdMap["shield-status"]; exists {
+		t.Errorf("shield-status should have been pruned")
+	}
+	if _, exists := cmdMap["argus-audit"]; exists {
+		t.Errorf("argus-audit should have been pruned")
+	}
+	if custom, exists := cmdMap["security-audit"]; !exists || custom["id"] != "keep-custom" {
+		t.Errorf("expected security-audit to be preserved with id 'keep-custom', got %v", custom)
 	}
 }
 
@@ -169,6 +226,9 @@ func TestSuperEngineering_Idempotent(t *testing.T) {
 	if len(res2.CommandsUpdated) != 0 {
 		t.Errorf("expected 0 commands updated on second run, got %d", len(res2.CommandsUpdated))
 	}
+	if len(res2.CommandsRemoved) != 0 {
+		t.Errorf("expected 0 commands removed on second run, got %d", len(res2.CommandsRemoved))
+	}
 	if len(res2.SetupAdded) != 0 {
 		t.Errorf("expected 0 setup added on second run, got %d", len(res2.SetupAdded))
 	}
@@ -181,9 +241,9 @@ func TestSuperEngineering_Idempotent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("third run failed: %v", err)
 	}
-	if len(res3.CommandsAdded) != 0 || len(res3.CommandsUpdated) != 0 {
-		t.Errorf("expected 0 added/updated on third run, got %d added, %d updated",
-			len(res3.CommandsAdded), len(res3.CommandsUpdated))
+	if len(res3.CommandsAdded) != 0 || len(res3.CommandsUpdated) != 0 || len(res3.CommandsRemoved) != 0 {
+		t.Errorf("expected 0 added/updated/removed on third run, got %d added, %d updated, %d removed",
+			len(res3.CommandsAdded), len(res3.CommandsUpdated), len(res3.CommandsRemoved))
 	}
 }
 
@@ -199,14 +259,14 @@ func TestSuperEngineering_UpdatesExistingCommandAndPreservesID(t *testing.T) {
   "setup": ["fabrial doctor"],
   "commands": [
     {
-      "id": "existing-airlock-uuid-1111",
-      "name": "airlock-status",
-      "command": "airlock status",
-      "icon": "🔒"
+      "id": "existing-doc-uuid-1111",
+      "name": "stack-doctor",
+      "command": "fabrial doctor",
+      "icon": "💎"
     },
     {
-      "id": "existing-argus-uuid-2222",
-      "name": "argus-audit",
+      "id": "existing-pf-uuid-2222",
+      "name": "pre-flight",
       "command": "argus scan .",
       "icon": "👁️"
     }
@@ -221,12 +281,11 @@ func TestSuperEngineering_UpdatesExistingCommandAndPreservesID(t *testing.T) {
 		t.Fatalf("SuperEngineering failed: %v", err)
 	}
 
-	// 6 other commands added (8 defaults - 2 existing)
-	if len(res.CommandsAdded) != 6 {
-		t.Errorf("expected 6 commands added, got %d: %v", len(res.CommandsAdded), res.CommandsAdded)
+	if len(res.CommandsAdded) != 0 {
+		t.Errorf("expected 0 commands added, got %d: %v", len(res.CommandsAdded), res.CommandsAdded)
 	}
 
-	// airlock-status and argus-audit should be updated
+	// stack-doctor and pre-flight should be updated
 	if len(res.CommandsUpdated) != 2 {
 		t.Errorf("expected 2 commands updated, got %d: %v", len(res.CommandsUpdated), res.CommandsUpdated)
 	}
@@ -242,8 +301,8 @@ func TestSuperEngineering_UpdatesExistingCommandAndPreservesID(t *testing.T) {
 	}
 
 	cmdList := parsed["commands"].([]interface{})
-	if len(cmdList) != 8 {
-		t.Fatalf("expected 8 total commands, got %d", len(cmdList))
+	if len(cmdList) != 2 {
+		t.Fatalf("expected 2 total commands, got %d", len(cmdList))
 	}
 
 	cmdMap := make(map[string]map[string]interface{})
@@ -252,22 +311,28 @@ func TestSuperEngineering_UpdatesExistingCommandAndPreservesID(t *testing.T) {
 		cmdMap[m["name"].(string)] = m
 	}
 
-	// airlock-status: ID preserved, command updated
-	airlock := cmdMap["airlock-status"]
-	if airlock["id"] != "existing-airlock-uuid-1111" {
-		t.Errorf("expected ID 'existing-airlock-uuid-1111' to be preserved, got %v", airlock["id"])
+	// stack-doctor: ID preserved, command updated
+	doc := cmdMap["stack-doctor"]
+	if doc["id"] != "existing-doc-uuid-1111" {
+		t.Errorf("expected ID 'existing-doc-uuid-1111' to be preserved, got %v", doc["id"])
 	}
-	if airlock["command"] != "airlock doctor" {
-		t.Errorf("expected command to be updated to 'airlock doctor', got %v", airlock["command"])
+	if doc["command"] != "fabrial doctor --fix" {
+		t.Errorf("expected command to be updated to 'fabrial doctor --fix', got %v", doc["command"])
+	}
+	if doc["icon"] != "🩺" {
+		t.Errorf("expected icon to be updated to '🩺', got %v", doc["icon"])
 	}
 
-	// argus-audit: ID preserved, command updated
-	argus := cmdMap["argus-audit"]
-	if argus["id"] != "existing-argus-uuid-2222" {
-		t.Errorf("expected ID 'existing-argus-uuid-2222' to be preserved, got %v", argus["id"])
+	// pre-flight: ID preserved, command updated
+	pf := cmdMap["pre-flight"]
+	if pf["id"] != "existing-pf-uuid-2222" {
+		t.Errorf("expected ID 'existing-pf-uuid-2222' to be preserved, got %v", pf["id"])
 	}
-	if argus["command"] != "argus vet --diff" {
-		t.Errorf("expected command to be updated to 'argus vet --diff', got %v", argus["command"])
+	if pf["command"] != "argus vet --diff && soulcaster verify-patch -base HEAD" {
+		t.Errorf("expected command to be updated, got %v", pf["command"])
+	}
+	if pf["icon"] != "🛡️" {
+		t.Errorf("expected icon to be updated to '🛡️', got %v", pf["icon"])
 	}
 }
 
@@ -283,12 +348,12 @@ func TestSuperEngineering_Deduplication(t *testing.T) {
   "commands": [
     {
       "id": "dup-doctor-1",
-      "name": "fabrial-doctor",
+      "name": "stack-doctor",
       "command": "fabrial doctor"
     },
     {
       "id": "dup-doctor-2",
-      "name": "fabrial-doctor",
+      "name": "stack-doctor",
       "command": "fabrial doctor --verbose"
     },
     {
@@ -300,16 +365,6 @@ func TestSuperEngineering_Deduplication(t *testing.T) {
       "id": "dup-custom-2",
       "name": "custom-tool",
       "command": "echo two"
-    },
-    {
-      "id": "dup-airlock-1",
-      "name": "airlock-status",
-      "command": "airlock status"
-    },
-    {
-      "id": "dup-airlock-2",
-      "name": "airlock-status",
-      "command": "airlock status --debug"
     }
   ]
 }`
@@ -322,9 +377,9 @@ func TestSuperEngineering_Deduplication(t *testing.T) {
 		t.Fatalf("SuperEngineering failed: %v", err)
 	}
 
-	// 6 new commands added (8 defaults - 2 existing matching default names: fabrial-doctor and airlock-status)
-	if len(res.CommandsAdded) != 6 {
-		t.Errorf("expected 6 commands added, got %d: %v", len(res.CommandsAdded), res.CommandsAdded)
+	// 1 new default command added (pre-flight, since stack-doctor already existed)
+	if len(res.CommandsAdded) != 1 {
+		t.Errorf("expected 1 command added, got %d: %v", len(res.CommandsAdded), res.CommandsAdded)
 	}
 
 	data, err := os.ReadFile(filepath.Join(configDir, "config.json"))
@@ -338,9 +393,9 @@ func TestSuperEngineering_Deduplication(t *testing.T) {
 	}
 
 	cmdList := parsed["commands"].([]interface{})
-	// Total commands: 8 defaults + 1 custom-tool = 9
-	if len(cmdList) != 9 {
-		t.Fatalf("expected 9 deduplicated commands, got %d", len(cmdList))
+	// Total commands: 2 defaults (stack-doctor, pre-flight) + 1 custom-tool = 3
+	if len(cmdList) != 3 {
+		t.Fatalf("expected 3 deduplicated commands, got %d: %v", len(cmdList), cmdList)
 	}
 
 	// Count occurrences of each name
@@ -360,17 +415,14 @@ func TestSuperEngineering_Deduplication(t *testing.T) {
 	}
 
 	// Verify first occurrence ID was preserved
-	if cmdMap["fabrial-doctor"]["id"] != "dup-doctor-1" {
-		t.Errorf("expected 'dup-doctor-1' to be preserved, got %v", cmdMap["fabrial-doctor"]["id"])
+	if cmdMap["stack-doctor"]["id"] != "dup-doctor-1" {
+		t.Errorf("expected 'dup-doctor-1' to be preserved, got %v", cmdMap["stack-doctor"]["id"])
 	}
 	if cmdMap["custom-tool"]["id"] != "dup-custom-1" {
 		t.Errorf("expected 'dup-custom-1' to be preserved, got %v", cmdMap["custom-tool"]["id"])
 	}
-	if cmdMap["airlock-status"]["id"] != "dup-airlock-1" {
-		t.Errorf("expected 'dup-airlock-1' to be preserved, got %v", cmdMap["airlock-status"]["id"])
-	}
-	if cmdMap["airlock-status"]["command"] != "airlock doctor" {
-		t.Errorf("expected airlock-status to be updated to 'airlock doctor', got %v", cmdMap["airlock-status"]["command"])
+	if cmdMap["stack-doctor"]["command"] != "fabrial doctor --fix" {
+		t.Errorf("expected stack-doctor to be updated to 'fabrial doctor --fix', got %v", cmdMap["stack-doctor"]["command"])
 	}
 }
 
@@ -425,7 +477,7 @@ func TestSuperEngineering_PreservesExistingConfig(t *testing.T) {
 	}
 
 	cmdList := parsed["commands"].([]interface{})
-	if len(cmdList) != 9 { // 1 existing + 8 default
-		t.Errorf("expected 9 commands, got %d", len(cmdList))
+	if len(cmdList) != 3 { // 1 existing custom + 2 defaults
+		t.Errorf("expected 3 commands, got %d", len(cmdList))
 	}
 }

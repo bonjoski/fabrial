@@ -41,21 +41,25 @@ fi
 
 # Fallback: standalone initialization when fabrial CLI does not yet have 'integrate'
 if [ "$IS_GLOBAL" = true ]; then
-    if ! command -v sc >/dev/null 2>&1; then
-        echo "Error: 'sc' CLI not found. super.engineering must be installed to configure global App Settings." >&2
+    if ! command -v sc >/dev/null 2>&1 && ! command -v se >/dev/null 2>&1; then
+        echo "Error: 'sc' or 'se' CLI not found. super.engineering must be installed to configure global App Settings." >&2
         exit 1
     fi
-    echo "  → Configuring global App Settings via 'sc' CLI (applies to ALL workspaces)..."
-    sc commands create "fabrial-doctor" --command "fabrial doctor --fix" --provider none --scope global --icon "💎" >/dev/null 2>&1 || true
-    sc commands create "argus-audit" --command "argus vet --diff" --provider none --scope global --icon "👁️" >/dev/null 2>&1 || true
-    sc commands create "airlock-status" --command "airlock doctor" --provider none --scope global --icon "🔒" >/dev/null 2>&1 || true
-    sc commands create "shield-status" --command "shield status" --provider none --scope global --icon "🛡️" >/dev/null 2>&1 || true
-    sc commands create "conjoiner-check" --command "fabrial session list" --provider none --scope global --icon "🔗" >/dev/null 2>&1 || true
-    sc commands create "stormcage-scan" --command "stormcage scan" --provider none --scope global --icon "⚡" >/dev/null 2>&1 || true
-    sc commands create "soulcaster-verify" --command "soulcaster verify-patch -base HEAD" --provider none --scope global --icon "🔮" >/dev/null 2>&1 || true
-    sc commands create "bomhound-enrich" --command "bomhound ." --provider none --scope global --icon "🐾" >/dev/null 2>&1 || true
-    sc project scripts set setup "fabrial doctor --fix" --scope user >/dev/null 2>&1 || true
-    sc project scripts set run shield "shield proxy --addr 127.0.0.1:8443 --tls" --scope user >/dev/null 2>&1 || true
+    CLI_BIN="sc"
+    if ! command -v sc >/dev/null 2>&1; then
+        CLI_BIN="se"
+    fi
+    echo "  → Configuring global App Settings via '${CLI_BIN}' CLI (applies to ALL workspaces)..."
+    
+    # Prune deprecated legacy commands
+    for dep in fabrial-doctor argus-audit airlock-status shield-status conjoiner-check stormcage-scan soulcaster-verify bomhound-enrich; do
+        ${CLI_BIN} commands delete "${dep}" --scope global >/dev/null 2>&1 || true
+    done
+
+    ${CLI_BIN} commands create "stack-doctor" --command "fabrial doctor --fix" --provider none --scope global --icon "🩺" >/dev/null 2>&1 || true
+    ${CLI_BIN} commands create "pre-flight" --command "argus vet --diff && soulcaster verify-patch -base HEAD" --provider none --scope global --icon "🛡️" >/dev/null 2>&1 || true
+    ${CLI_BIN} project scripts set setup "fabrial doctor --fix" --scope user >/dev/null 2>&1 || true
+    ${CLI_BIN} project scripts set run shield "shield proxy --addr 127.0.0.1:8443 --tls" --scope user >/dev/null 2>&1 || true
     echo "✔ Successfully configured global App Settings for all paths and workspaces."
     exit 0
 fi
@@ -94,17 +98,13 @@ cfg['run'] = run
 
 # Ensure commands
 cmds = cfg.get('commands', [])
+deprecated = {'fabrial-doctor', 'argus-audit', 'airlock-status', 'shield-status', 'conjoiner-check', 'stormcage-scan', 'soulcaster-verify', 'bomhound-enrich'}
+cmds = [c for c in cmds if c.get('name') not in deprecated]
 existing_names = {c.get('name') for c in cmds}
 
 defaults = [
-    {'name': 'fabrial-doctor', 'command': 'fabrial doctor --fix', 'provider_preset_key': 'none', 'icon': '💎'},
-    {'name': 'argus-audit', 'command': 'argus vet --diff', 'provider_preset_key': 'none', 'icon': '👁️'},
-    {'name': 'airlock-status', 'command': 'airlock doctor', 'provider_preset_key': 'none', 'icon': '🔒'},
-    {'name': 'shield-status', 'command': 'shield status', 'provider_preset_key': 'none', 'icon': '🛡️'},
-    {'name': 'conjoiner-check', 'command': 'fabrial session list', 'provider_preset_key': 'none', 'icon': '🔗'},
-    {'name': 'stormcage-scan', 'command': 'stormcage scan', 'provider_preset_key': 'none', 'icon': '⚡'},
-    {'name': 'soulcaster-verify', 'command': 'soulcaster verify-patch -base HEAD', 'provider_preset_key': 'none', 'icon': '🔮'},
-    {'name': 'bomhound-enrich', 'command': 'bomhound .', 'provider_preset_key': 'none', 'icon': '🐾'},
+    {'name': 'stack-doctor', 'command': 'fabrial doctor --fix', 'provider_preset_key': 'none', 'icon': '🩺'},
+    {'name': 'pre-flight', 'command': 'argus vet --diff && soulcaster verify-patch -base HEAD', 'provider_preset_key': 'none', 'icon': '🛡️'},
 ]
 
 for d in defaults:

@@ -47,6 +47,19 @@ type Result struct {
 	RunAdded        []string `json:"run_added"`
 	CommandsAdded   []string `json:"commands_added"`
 	CommandsUpdated []string `json:"commands_updated,omitempty"`
+	CommandsRemoved []string `json:"commands_removed,omitempty"`
+}
+
+// DeprecatedCommands are legacy command names that are automatically pruned during integration.
+var DeprecatedCommands = []string{
+	"fabrial-doctor",
+	"argus-audit",
+	"airlock-status",
+	"shield-status",
+	"conjoiner-check",
+	"stormcage-scan",
+	"soulcaster-verify",
+	"bomhound-enrich",
 }
 
 // DefaultCommands returns the canonical Bonjoski security commands for super.engineering.
@@ -54,82 +67,22 @@ func DefaultCommands() []CustomCommand {
 	return []CustomCommand{
 		{
 			ID:                generateUUID(),
-			Name:              "fabrial-doctor",
+			Name:              "stack-doctor",
 			Command:           "fabrial doctor --fix",
 			DispatchMode:      "inject_current_chat",
 			ViewPreference:    "default",
 			ProviderPresetKey: "none",
-			Icon:              "💎",
+			Icon:              "🩺",
 			AutoSubmit:        true,
 		},
 		{
 			ID:                generateUUID(),
-			Name:              "argus-audit",
-			Command:           "argus vet --diff",
-			DispatchMode:      "inject_current_chat",
-			ViewPreference:    "default",
-			ProviderPresetKey: "none",
-			Icon:              "👁️",
-			AutoSubmit:        true,
-		},
-		{
-			ID:                generateUUID(),
-			Name:              "airlock-status",
-			Command:           "airlock doctor",
-			DispatchMode:      "inject_current_chat",
-			ViewPreference:    "default",
-			ProviderPresetKey: "none",
-			Icon:              "🔒",
-			AutoSubmit:        true,
-		},
-		{
-			ID:                generateUUID(),
-			Name:              "shield-status",
-			Command:           "shield status",
+			Name:              "pre-flight",
+			Command:           "argus vet --diff && soulcaster verify-patch -base HEAD",
 			DispatchMode:      "inject_current_chat",
 			ViewPreference:    "default",
 			ProviderPresetKey: "none",
 			Icon:              "🛡️",
-			AutoSubmit:        true,
-		},
-		{
-			ID:                generateUUID(),
-			Name:              "conjoiner-check",
-			Command:           "fabrial session list",
-			DispatchMode:      "inject_current_chat",
-			ViewPreference:    "default",
-			ProviderPresetKey: "none",
-			Icon:              "🔗",
-			AutoSubmit:        true,
-		},
-		{
-			ID:                generateUUID(),
-			Name:              "stormcage-scan",
-			Command:           "stormcage scan",
-			DispatchMode:      "inject_current_chat",
-			ViewPreference:    "default",
-			ProviderPresetKey: "none",
-			Icon:              "⚡",
-			AutoSubmit:        true,
-		},
-		{
-			ID:                generateUUID(),
-			Name:              "soulcaster-verify",
-			Command:           "soulcaster verify-patch -base HEAD",
-			DispatchMode:      "inject_current_chat",
-			ViewPreference:    "default",
-			ProviderPresetKey: "none",
-			Icon:              "🔮",
-			AutoSubmit:        true,
-		},
-		{
-			ID:                generateUUID(),
-			Name:              "bomhound-enrich",
-			Command:           "bomhound .",
-			DispatchMode:      "inject_current_chat",
-			ViewPreference:    "default",
-			ProviderPresetKey: "none",
-			Icon:              "🐾",
 			AutoSubmit:        true,
 		},
 	}
@@ -222,14 +175,23 @@ func SuperEngineering(targetDir string) (*Result, error) {
 		}
 	}
 
-	// Deduplicate existing commands by name, preserving the first occurrence.
+	// Filter out deprecated commands and deduplicate remaining by name, preserving the first occurrence.
 	// Commands without a name are preserved.
 	var dedupedList []map[string]interface{}
 	existingByName := make(map[string]map[string]interface{})
+	deprecatedSet := make(map[string]bool)
+	for _, dep := range DeprecatedCommands {
+		deprecatedSet[dep] = true
+	}
+
 	for _, c := range cmdList {
 		name, ok := c["name"].(string)
 		if !ok || name == "" {
 			dedupedList = append(dedupedList, c)
+			continue
+		}
+		if deprecatedSet[name] {
+			result.CommandsRemoved = append(result.CommandsRemoved, name)
 			continue
 		}
 		if _, seen := existingByName[name]; seen {
@@ -333,7 +295,10 @@ func SuperEngineering(targetDir string) (*Result, error) {
 func SuperEngineeringGlobal() (*Result, error) {
 	scPath, err := exec.LookPath("sc")
 	if err != nil {
-		return nil, fmt.Errorf("'sc' CLI not found in PATH; super.engineering must be running for global App Settings installation")
+		scPath, err = exec.LookPath("se")
+		if err != nil {
+			return nil, fmt.Errorf("'sc' or 'se' CLI not found in PATH; super.engineering must be running for global App Settings installation")
+		}
 	}
 
 	result := &Result{
@@ -375,7 +340,21 @@ func SuperEngineeringGlobal() (*Result, error) {
 		}
 	}
 
-	// 2. Deduplicate existing global commands if duplicate commands with the same name exist
+	// 2. Remove deprecated legacy commands from global scope
+	for _, depName := range DeprecatedCommands {
+		if entries, exists := existingByName[depName]; exists {
+			for _, entry := range entries {
+				if entry.ID != "" {
+					if delErr := exec.Command(scPath, "commands", "delete", entry.ID, "--scope", "global").Run(); delErr == nil {
+						result.CommandsRemoved = append(result.CommandsRemoved, depName)
+					}
+				}
+			}
+			delete(existingByName, depName)
+		}
+	}
+
+	// 3. Deduplicate remaining global commands if duplicate commands with the same name exist
 	for name, entries := range existingByName {
 		if len(entries) > 1 {
 			// Keep entries[0], delete entries[1:]
@@ -390,7 +369,7 @@ func SuperEngineeringGlobal() (*Result, error) {
 		}
 	}
 
-	// 3. Register or update global commands matching by name
+	// 4. Register or update canonical global commands matching by name
 	for _, def := range DefaultCommands() {
 		entries, exists := existingByName[def.Name]
 		if exists && len(entries) > 0 {
