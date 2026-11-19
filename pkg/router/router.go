@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"runtime"
 	"strings"
 	"sync"
@@ -282,6 +283,42 @@ func validateLeaseSecrets(secrets string) error {
 	return nil
 }
 
+var (
+	reSubshellChaining = regexp.MustCompile(`(?i)(\$\(.*\)|` + "`.*`" + `|;\s*(curl|wget|bash|sh|nc|python|perl|eval|exec)|\|\|\s*(curl|wget|bash|sh)|&&\s*(curl|wget|bash|sh|nc))`)
+	reFuzzingAnomalies = regexp.MustCompile(`(?i)(%[0-9a-f]{2}){8,}|(\x00|\x1b)|(\.\./){4,}|/proc/self/(mem|environ)`)
+	reInlineEvalNet    = regexp.MustCompile(`(?i)(-c|-e|\beval\b).*(\bsocket\b|\bnet\b|\bhttp\b|\burllib\b|requests|fetch|tls|miren)`)
+)
+
+// DetectAmbiguousParameters inspects command arguments for subshell injection,
+// differential fuzzing payloads, or inline network/eval execution that warrant Tier 2 hardware isolation.
+func DetectAmbiguousParameters(cmdArgs []string) (bool, string) {
+	if len(cmdArgs) == 0 {
+		return false, ""
+	}
+
+	totalLen := 0
+	for _, arg := range cmdArgs {
+		totalLen += len(arg)
+		if reSubshellChaining.MatchString(arg) {
+			return true, "embedded subshell or command chaining detected in command arguments"
+		}
+		if reFuzzingAnomalies.MatchString(arg) {
+			return true, "fuzzing payload anomaly or memory inspection pattern detected"
+		}
+	}
+
+	if totalLen > 4096 {
+		return true, fmt.Sprintf("argument vector size (%d bytes) exceeds Tier 1 fast-path threshold (>4096)", totalLen)
+	}
+
+	fullCmd := strings.Join(cmdArgs, " ")
+	if reInlineEvalNet.MatchString(fullCmd) {
+		return true, "inline script execution with embedded network/eval primitives"
+	}
+
+	return false, ""
+}
+
 // Route analyzes execution options, commands, and repository policy to produce a routing Decision.
 func Route(opts *ExecutionOptions, cmdArgs []string) (*Decision, error) {
 	if len(cmdArgs) == 0 || strings.TrimSpace(cmdArgs[0]) == "" {
@@ -319,6 +356,14 @@ func Route(opts *ExecutionOptions, cmdArgs []string) (*Decision, error) {
 		if opts.Airgap && selectedTier == policy.Tier2 {
 			selectedTier = policy.Tier1
 			matchReason = "airgap requested: routed to Tier 1 kernel sandbox to guarantee offline isolation (preventing Tier 2 network egress)"
+		} else if !opts.Airgap && selectedTier == policy.Tier1 {
+			// Dynamic Tier Escalation:
+			// If arguments contain ambiguous subshell chaining, differential fuzzing payloads (ARTEX/PentAGI),
+			// or inline network execution, escalate from Tier 1 to Tier 2 (Aegisbox MicroVM) for hardware isolation.
+			if isAmbiguous, reason := DetectAmbiguousParameters(cmdArgs); isAmbiguous {
+				selectedTier = policy.Tier2
+				matchReason = fmt.Sprintf("dynamic tier escalation: %s (escalated to Tier 2 Aegisbox MicroVM for hardware isolation)", reason)
+			}
 		}
 	}
 

