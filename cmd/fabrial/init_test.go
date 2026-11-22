@@ -84,3 +84,55 @@ func TestFabrialCLI_Explain(t *testing.T) {
 		t.Fatalf("unexpected explain output:\n%s", out.String())
 	}
 }
+
+func TestFabrialCLI_InitMCPDryRunApplyAndSymlinkReject(t *testing.T) {
+	dir := t.TempDir()
+
+	// 1. Dry-run writes 0 files
+	var out, errBuf bytes.Buffer
+	code := runInit([]string{"--dir", dir, "--mcp", "--target", "claude,cursor", "--json"}, &out, &errBuf)
+	if code != 0 {
+		t.Fatalf("init --mcp dry-run exited %d, stderr: %s", code, errBuf.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".mcp.json")); !os.IsNotExist(err) {
+		t.Fatal("dry-run wrote .mcp.json")
+	}
+
+	// 2. --apply writes files atomically
+	out.Reset()
+	errBuf.Reset()
+	code = runInit([]string{"--dir", dir, "--mcp", "--apply", "--target", "claude,cursor", "--json"}, &out, &errBuf)
+	if code != 0 {
+		t.Fatalf("init --mcp --apply exited %d, stderr: %s", code, errBuf.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".mcp.json")); err != nil {
+		t.Fatalf("expected .mcp.json written: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".cursor", "mcp.json")); err != nil {
+		t.Fatalf("expected .cursor/mcp.json written: %v", err)
+	}
+
+	// 3. Symlinked IDE config fails closed with exit code 10
+	symDir := t.TempDir()
+	outside := filepath.Join(t.TempDir(), "escape.json")
+	if err := os.WriteFile(outside, []byte(`{}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(symDir, ".mcp.json")); err != nil {
+		t.Fatal(err)
+	}
+
+	out.Reset()
+	errBuf.Reset()
+	code = runInit([]string{"--dir", symDir, "--mcp", "--apply", "--target", "claude", "--json"}, &out, &errBuf)
+	if code != 10 {
+		t.Fatalf("expected exit code 10 on symlinked IDE config, got %d (stderr: %s)", code, errBuf.String())
+	}
+	var ffe ux.FixForwardError
+	if err := json.Unmarshal(errBuf.Bytes(), &ffe); err != nil {
+		t.Fatalf("expected FixForwardError JSON on stderr, got: %v", err)
+	}
+	if ffe.Code != "FABRIAL_INIT_MCP_SYMLINK_REJECTED" {
+		t.Fatalf("unexpected error code %q", ffe.Code)
+	}
+}

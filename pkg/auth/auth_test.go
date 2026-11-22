@@ -124,13 +124,15 @@ func TestAuth_LoginStatusLogout(t *testing.T) {
 		t.Fatalf("unexpected status bundle: %s", statusBundle.TenantID)
 	}
 
-	// 5. Test Ambient Session Injection
+	// 5. Verify PANW Safe Harbor compliance: ambient session env must NOT inject STONEWARD_* cloud vars
 	env := session.BuildEnvironment("master-1", "", "token-1", "", "")
-	if env["FABRIAL_AUTH_TOKEN"] != "stnw_live_test_token_abc123" {
-		t.Fatalf("expected FABRIAL_AUTH_TOKEN in environment, got: %s", env["FABRIAL_AUTH_TOKEN"])
+	for k := range env {
+		if len(k) >= 10 && k[:10] == "STONEWARD_" {
+			t.Fatalf("PANW Safe Harbor violation: BuildEnvironment exported cloud var %s", k)
+		}
 	}
-	if env["STONEWARD_TENANT_ID"] != "tenant-bonjo" {
-		t.Fatalf("expected STONEWARD_TENANT_ID in environment, got: %s", env["STONEWARD_TENANT_ID"])
+	if _, exists := env["FABRIAL_AUTH_TOKEN"]; exists {
+		t.Fatalf("PANW Safe Harbor violation: BuildEnvironment exported FABRIAL_AUTH_TOKEN")
 	}
 
 	// 6. Test Policy Pull

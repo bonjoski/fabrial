@@ -75,6 +75,7 @@ Every major use case for Fabrial is backed by dedicated, task-oriented recipes i
 | Use Case | Scenario & Quick Recipe | Full Guide |
 | :--- | :--- | :--- |
 | **60-Second Paved-Road Onboarding (UB-CLI-v2)** | Auto-detect repo stack & AI SDKs in read-only mode with zero YAML written, plus `--why` progressive disclosure:<br/>`fabrial init` / `fabrial init --why` | [Guide](docs/use-cases/01-sixty-second-paved-road-onboarding.md) |
+| **Inter-Tool `BLPR-v1` Receipts & Multi-IDE MCP** | Dry-run & atomically wire canonical MCP servers into Antigravity, Claude Code, Cursor & Super.Engineering, then verify signed DSSE receipts:<br/>`fabrial init --mcp --apply` / `fabrial receipt verify` | [Guide](docs/use-cases/02-inter-tool-receipts-and-mcp-golden-path.md) |
 | **Local Diff-Only PR Gate Dry-Run** | Preview proven diff checks (`argus`, `soulcaster`, optional loopback `aegisbox`) across parallel worktrees with zero Touch ID prompts:<br/>`fabrial check --diff --why` | [Guide](docs/use-cases/01-sixty-second-paved-road-onboarding.md) |
 | **Transparent Agent Command Routing** | Automatically dispatch linters to <15ms kernel sandboxes and package installs to microVMs:<br/>`fabrial run npm install lodash` | [Guide](docs/use-cases/01-transparent-command-routing.md) |
 | **Ambient Session Brokerage** | Start an isolated dev session with scoped credentials and zero Hop Tax:<br/>`eval $(fabrial session begin --ttl 30m --scopes read,build)` | [Guide](docs/use-cases/02-ambient-session-broker.md) |

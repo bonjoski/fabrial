@@ -247,3 +247,64 @@ func TestSession_Persistence(t *testing.T) {
 		t.Fatalf("scopes mismatch: %v", retrieved.Scopes)
 	}
 }
+
+func TestBuildEnvironment_SafeHarborNoCloudVars(t *testing.T) {
+	// Even if legacy STONEWARD_* env vars exist in the shell, BuildEnvironment must NEVER export them.
+	t.Setenv("STONEWARD_TOKEN", "stnw_secret_leak_test")
+	t.Setenv("STONEWARD_TENANT_ID", "tenant-cloud")
+	t.Setenv("STONEWARD_SERVER_URL", "https://cloud.example.com")
+	t.Setenv("STONEWARD_USER_ID", "user-123")
+	t.Setenv("FABRIAL_AUTH_TOKEN", "cloud_tok_123")
+
+	worktree := t.TempDir()
+	sessionID := SessionID("sess_01SAFEHARBOR123")
+
+	env := BuildEnvironmentWithWorkspace(sessionID, "", "local-dpop-token", "127.0.0.1:8443", "", worktree)
+	for k := range env {
+		if strings.HasPrefix(k, "STONEWARD_") {
+			t.Fatalf("SEC-PANW-01 FAIL: cloud control plane env var %q exported by BuildEnvironmentWithWorkspace", k)
+		}
+		if k == "FABRIAL_AUTH_TOKEN" {
+			t.Fatalf("SEC-PANW-01 FAIL: cloud auth token FABRIAL_AUTH_TOKEN exported")
+		}
+	}
+
+	if env["FABRIAL_WORKTREE_ROOT"] != worktree {
+		t.Fatalf("expected FABRIAL_WORKTREE_ROOT=%q, got %q", worktree, env["FABRIAL_WORKTREE_ROOT"])
+	}
+	wantReceiptDir := worktree + "/.fabrial/receipts/" + string(sessionID)
+	if env["FABRIAL_RECEIPT_DIR"] != wantReceiptDir {
+		t.Fatalf("expected FABRIAL_RECEIPT_DIR=%q, got %q", wantReceiptDir, env["FABRIAL_RECEIPT_DIR"])
+	}
+
+	// Verify BeginSession and DeriveChildSession propagate FABRIAL_WORKTREE_ROOT and session-scoped FABRIAL_RECEIPT_DIR
+	sm := NewSessionManager()
+	master, err := sm.BeginSession(context.Background(), SessionConfig{
+		WorkspacePath: worktree,
+		TTL:           10 * time.Minute,
+		AllowedScopes: []string{"read", "test"},
+	})
+	if err != nil {
+		t.Fatalf("BeginSession: %v", err)
+	}
+	if master.Environment["FABRIAL_WORKTREE_ROOT"] != worktree {
+		t.Fatalf("master missing FABRIAL_WORKTREE_ROOT: %+v", master.Environment)
+	}
+	if !strings.HasSuffix(master.Environment["FABRIAL_RECEIPT_DIR"], "/.fabrial/receipts/"+string(master.ID)) {
+		t.Fatalf("unexpected master FABRIAL_RECEIPT_DIR: %q", master.Environment["FABRIAL_RECEIPT_DIR"])
+	}
+
+	child, err := sm.DeriveChildSession(context.Background(), master.ID, "sub_1", []string{"read"})
+	if err != nil {
+		t.Fatalf("DeriveChildSession: %v", err)
+	}
+	if child.Environment["FABRIAL_WORKTREE_ROOT"] != worktree {
+		t.Fatalf("child missing FABRIAL_WORKTREE_ROOT: %+v", child.Environment)
+	}
+	if !strings.HasSuffix(child.Environment["FABRIAL_RECEIPT_DIR"], "/.fabrial/receipts/"+string(child.ID)) {
+		t.Fatalf("unexpected child FABRIAL_RECEIPT_DIR: %q", child.Environment["FABRIAL_RECEIPT_DIR"])
+	}
+	if child.Environment["FABRIAL_RECEIPT_DIR"] == master.Environment["FABRIAL_RECEIPT_DIR"] {
+		t.Fatal("child session must have its own isolated FABRIAL_RECEIPT_DIR")
+	}
+}

@@ -123,7 +123,7 @@ func (sm *SessionManager) BeginSession(ctx context.Context, cfg SessionConfig) (
 		scopes = []string{"read", "build", "test", "lint"}
 	}
 
-	env := BuildEnvironment(sessionID, "", masterToken, cfg.ShieldProxyAddr, cfg.ShieldCACertPath)
+	env := BuildEnvironmentWithWorkspace(sessionID, "", masterToken, cfg.ShieldProxyAddr, cfg.ShieldCACertPath, cfg.WorkspacePath)
 
 	grant := &SessionGrant{
 		ID:          sessionID,
@@ -201,7 +201,7 @@ func (sm *SessionManager) DeriveChildSession(ctx context.Context, parentID Sessi
 	expiresAt := now.Add(childTTL)
 
 	// Build child ambient environment
-	env := BuildEnvironment(childID, parentID, childToken, parent.Environment["HTTP_PROXY"], parent.Environment["SSL_CERT_FILE"])
+	env := BuildEnvironmentWithWorkspace(childID, parentID, childToken, parent.Environment["HTTP_PROXY"], parent.Environment["SSL_CERT_FILE"], parent.Environment["FABRIAL_WORKTREE_ROOT"])
 	if subtaskID != "" {
 		env["FABRIAL_SUBTASK_ID"] = subtaskID
 	}

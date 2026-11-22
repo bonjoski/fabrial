@@ -2,17 +2,27 @@ package session
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
-
-	"github.com/bonjoski/fabrial/pkg/auth"
 )
 
 var validEnvKeyRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
-// BuildEnvironment generates the ambient security environment map for an active session.
+// BuildEnvironment generates the strictly local, PANW Safe Harbor compliant
+// ambient security environment map for an active session.
+// If FABRIAL_WORKTREE_ROOT is set in the process environment, it also exports
+// FABRIAL_WORKTREE_ROOT and FABRIAL_RECEIPT_DIR.
 func BuildEnvironment(sessionID SessionID, parentID SessionID, token string, proxyAddr string, caCertPath string) map[string]string {
+	return BuildEnvironmentWithWorkspace(sessionID, parentID, token, proxyAddr, caCertPath, os.Getenv("FABRIAL_WORKTREE_ROOT"))
+}
+
+// BuildEnvironmentWithWorkspace generates the strictly local ambient security
+// environment map for an active session bound to worktreeRoot.
+// Per SEC-PANW-01, zero cloud control plane variables (STONEWARD_*, etc.) are exported.
+func BuildEnvironmentWithWorkspace(sessionID SessionID, parentID SessionID, token string, proxyAddr string, caCertPath string, worktreeRoot string) map[string]string {
 	env := map[string]string{
 		"FABRIAL_SESSION_ACTIVE": "1",
 		"FABRIAL_SESSION_ID":     string(sessionID),
@@ -42,28 +52,22 @@ func BuildEnvironment(sessionID SessionID, parentID SessionID, token string, pro
 		env["NODE_EXTRA_CA_CERTS"] = caCertPath
 	}
 
-	// Ambient Stoneward Control Plane Authentication Injection
-	if authCtx, err := auth.LoadFabrialAuth(); err == nil && authCtx != nil && authCtx.IsValid() {
-		// Only inject token if available in plaintext or non-interactive store.
-		// Never trigger interactive biometric Locksmith prompts during ambient environment construction.
-		if authCtx.Token != "" {
-			env["FABRIAL_AUTH_TOKEN"] = authCtx.Token
-			env["STONEWARD_TOKEN"] = authCtx.Token
-		} else if authCtx.TokenStorage != "locksmith" {
-			tok, _ := authCtx.ResolveToken()
-			if tok != "" {
-				env["FABRIAL_AUTH_TOKEN"] = tok
-				env["STONEWARD_TOKEN"] = tok
-			}
-		}
-		env["STONEWARD_TENANT_ID"] = authCtx.TenantID
-		env["STONEWARD_SERVER_URL"] = authCtx.ServerURL
-		if authCtx.UserID != "" {
-			env["STONEWARD_USER_ID"] = authCtx.UserID
+	if root := strings.TrimSpace(worktreeRoot); root != "" {
+		cleanRoot := filepath.Clean(root)
+		env["FABRIAL_WORKTREE_ROOT"] = cleanRoot
+		if sid := string(sessionID); isSafeReceiptPathSegment(sid) {
+			env["FABRIAL_RECEIPT_DIR"] = filepath.Join(cleanRoot, ".fabrial", "receipts", sid)
 		}
 	}
 
 	return env
+}
+
+func isSafeReceiptPathSegment(seg string) bool {
+	if seg == "" || strings.Contains(seg, "..") || strings.ContainsAny(seg, `/\`) {
+		return false
+	}
+	return true
 }
 
 // FormatShellExport converts an environment map into eval-safe POSIX shell export statements,

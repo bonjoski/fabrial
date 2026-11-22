@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -96,6 +97,9 @@ func main() {
 	case "init":
 		handleInit(args)
 
+	case "receipt":
+		handleReceipt(args)
+
 	case "check":
 		handleCheck(args)
 
@@ -122,7 +126,8 @@ func printUsage() {
 Ambient Session Broker, Multi-Agent Concurrency Coordinator & Scoped Security Fabric.
 
 Usage:
-  fabrial init [--dir <path>] [--json] [--why]
+  fabrial init [--dir <path>] [--mcp [--apply] [--global] [--target all|antigravity|claude|cursor|superengineering] [--conjoiner-wrap]] [--json] [--why]
+  fabrial receipt [verify|status] [--session <id>] [--dir <path>] [--pubkey-b64 <b64>] [--json] [--why]
   fabrial check [--diff] [--dir <path>] [--ai-target <local-url>] [--json] [--why]
   fabrial explain <topic> [--json] [--why]
   fabrial launch [--profile agent] [--] <editor-or-agent> [args...]
@@ -440,7 +445,12 @@ func handleInit(args []string) {
 func runInit(args []string, stdout, stderr io.Writer) int {
 	asJSON := false
 	showWhy := false
+	mcpMode := false
+	applyMode := false
+	isGlobal := false
+	conjoinerWrap := false
 	targetDir := "."
+	var mcpTargets []string
 
 	// Pre-scan output mode flags so even flag-parsing errors honor --json and --why.
 	for _, arg := range args {
@@ -458,6 +468,29 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 			asJSON = true
 		case "--why":
 			showWhy = true
+		case "--mcp":
+			mcpMode = true
+		case "--apply":
+			applyMode = true
+		case "--global", "-g":
+			isGlobal = true
+		case "--conjoiner-wrap":
+			conjoinerWrap = true
+		case "--target":
+			if i+1 >= len(args) {
+				ffe := &ux.FixForwardError{
+					Tool:           "fabrial",
+					Code:           "FABRIAL_INIT_MISSING_TARGET",
+					Summary:        "Flag --target requires an IDE name (all, antigravity, claude, cursor, superengineering)",
+					RemediationCmd: "fabrial init --mcp --target all",
+					WhyOneLiner:    "Specify which local IDE MCP config file(s) to preview or update.",
+					ExitCode:       1,
+				}
+				_ = ffe.Render(stderr, asJSON, showWhy)
+				return ffe.ExitCode
+			}
+			mcpTargets = append(mcpTargets, args[i+1])
+			i++
 		case "--dir", "-d":
 			if i+1 >= len(args) {
 				ffe := &ux.FixForwardError{
@@ -475,13 +508,19 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 			targetDir = args[i+1]
 			i++
 		case "help", "-h", "--help":
-			_, _ = fmt.Fprintln(stdout, `Usage: fabrial init [--dir <path>] [--json] [--why]
+			_, _ = fmt.Fprintln(stdout, `Usage: fabrial init [--dir <path>] [--mcp [--apply] [--global] [--target <ide>] [--conjoiner-wrap]] [--json] [--why]
 Strictly read-only 60-second stack & AI SDK detector (writes zero YAML files).
+With --mcp, previews canonical UB-MCP-v1 server wiring across local IDEs (dry-run by default; pass --apply to write).
 
 Options:
-  --dir, -d <path>   Workspace root directory to inspect (default: .)
-  --json             Emit structured single-line JSON for AI coding agents
-  --why              Show progressive disclosure breakdown, detected manifests & safety tips`)
+  --dir, -d <path>     Workspace root directory to inspect (default: .)
+  --mcp                Preview/wire canonical MCP servers (coppermind, argus, airlock, aegisbox, locksmith)
+  --apply              Opt-in to apply --mcp changes atomically with .bak backups and Lstat symlink guards
+  --global, -g         Target user-global IDE MCP configs (~/.gemini/config/mcp_config.json, ~/.claude.json, ~/.cursor/mcp.json)
+  --target <ide>       IDE target: all, antigravity, claude, cursor, superengineering (default: all)
+  --conjoiner-wrap     Wrap MCP servers through mcp-conjoiner-proxy when installed on PATH
+  --json               Emit structured single-line JSON for AI coding agents
+  --why                Show progressive disclosure breakdown, detected manifests, or MCP diffs`)
 			return 0
 		default:
 			if strings.HasPrefix(arg, "-") {
@@ -490,8 +529,8 @@ Options:
 					Code:           "FABRIAL_INIT_UNKNOWN_FLAG",
 					Summary:        fmt.Sprintf("Unrecognized flag %q for fabrial init", arg),
 					RemediationCmd: "fabrial init --why",
-					WhyOneLiner:    "fabrial init only accepts --dir, --json, and --why (strictly read-only by default).",
-					DeepWhy:        "To avoid unintended mutations, fabrial init never writes YAML or mutates shell profiles by default.",
+					WhyOneLiner:    "fabrial init accepts --dir, --mcp, --apply, --global, --target, --conjoiner-wrap, --json, and --why.",
+					DeepWhy:        "To avoid unintended mutations, fabrial init never writes files unless you explicitly pass --mcp --apply.",
 					ExitCode:       1,
 				}
 				_ = ffe.Render(stderr, asJSON, showWhy)
@@ -499,6 +538,55 @@ Options:
 			}
 			targetDir = arg
 		}
+	}
+
+	if applyMode && !mcpMode {
+		ffe := &ux.FixForwardError{
+			Tool:           "fabrial",
+			Code:           "FABRIAL_INIT_APPLY_REQUIRES_MCP",
+			Summary:        "Flag --apply is only valid alongside --mcp",
+			RemediationCmd: "fabrial init --mcp --apply",
+			WhyOneLiner:    "Plain `fabrial init` is strictly read-only and never writes YAML files.",
+			DeepWhy:        "Pass `--mcp` to preview IDE MCP config changes, and `--mcp --apply` to atomically write them with .bak backups.",
+			ExitCode:       1,
+		}
+		_ = ffe.Render(stderr, asJSON, showWhy)
+		return ffe.ExitCode
+	}
+
+	if mcpMode {
+		report, err := integration.PlanAndApplyMCP(integration.MCPInitOptions{
+			WorktreeDir:   targetDir,
+			Global:        isGlobal,
+			Apply:         applyMode,
+			ConjoinerWrap: conjoinerWrap,
+			Targets:       mcpTargets,
+		})
+		if err != nil {
+			var ffe *ux.FixForwardError
+			if errors.As(err, &ffe) {
+				_ = ffe.Render(stderr, asJSON, showWhy)
+				if ffe.ExitCode != 0 {
+					return ffe.ExitCode
+				}
+				return 1
+			}
+			fallback := &ux.FixForwardError{
+				Tool:           "fabrial",
+				Code:           "FABRIAL_INIT_MCP_FAILED",
+				Summary:        err.Error(),
+				RemediationCmd: "fabrial init --mcp --why",
+				WhyOneLiner:    "Verify target IDE config permissions and ensure no symlinks exist on the config path.",
+				ExitCode:       1,
+			}
+			_ = fallback.Render(stderr, asJSON, showWhy)
+			return 1
+		}
+		if err := report.Render(stdout, asJSON, showWhy); err != nil {
+			_, _ = fmt.Fprintf(stderr, "fabrial: failed to render init --mcp output: %v\n", err)
+			return 1
+		}
+		return 0
 	}
 
 	res, err := initscan.Scan(initscan.ScanOptions{Dir: targetDir})
@@ -961,7 +1049,9 @@ func handleSession(args []string) {
 			}
 		}
 
+		wd, _ := os.Getwd()
 		grant, err := sm.BeginSession(context.Background(), session.SessionConfig{
+			WorkspacePath:      wd,
 			TTL:                ttl,
 			AllowedScopes:      scopes,
 			BiometricPreflight: biometric,

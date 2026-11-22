@@ -15,8 +15,8 @@ func TestAntigravity_LocalIntegration(t *testing.T) {
 		t.Fatalf("Antigravity integration failed: %v", err)
 	}
 
-	if len(res.ServersAdded) != 3 {
-		t.Errorf("Expected 3 servers added, got %d (%v)", len(res.ServersAdded), res.ServersAdded)
+	if len(res.ServersAdded) != len(CanonicalMCPServerOrder) {
+		t.Errorf("Expected %d servers added, got %d (%v)", len(CanonicalMCPServerOrder), len(res.ServersAdded), res.ServersAdded)
 	}
 
 	// Verify file content
@@ -36,7 +36,7 @@ func TestAntigravity_LocalIntegration(t *testing.T) {
 		t.Fatalf("mcpServers key missing or not a map")
 	}
 
-	for _, name := range []string{"aegisbox", "locksmith", "airlock"} {
+	for _, name := range CanonicalMCPServerOrder {
 		if _, exists := servers[name]; !exists {
 			t.Errorf("Expected server %s to exist", name)
 		}

@@ -20,3 +20,10 @@
 - Control Socket: `~/.fabrial/fabrial.sock`
 - Dependency Sockets: `~/.argus/argus.sock`, `~/.locksmith/locksmith.sock`, `~/.conjoiner/conjoiner.sock`, `~/.aegisbox/aegisboxd.sock`
 - Documentation: README.md & AGENTS.md
+
+
+## Paved-Road Integration (`2026-11-22`: `UB-CLI-v2`, `BLPR-v1` & `UB-MCP-v1`)
+- Zero-config onboarding: `fabrial init [--json]`, `fabrial init --mcp [--apply] [--global] [--target all|antigravity|claude|cursor] [--conjoiner-wrap]`
+- Worktree-local PR dry-run & progressive disclosure: `fabrial check --diff [--why|--json]`, `fabrial explain [topic] [--json]`
+- Local provenance receipts (`BLPR-v1`, DSSE / in-toto Statement v1): `fabrial receipt status [--json]`, `fabrial receipt verify [--session <id>] [--pubkey-b64 <b64>] [--json] [--why]`
+- Safe Harbor session env: exports `FABRIAL_SESSION_ID`, `FABRIAL_RECEIPT_DIR`, `FABRIAL_WORKTREE_ROOT` (zero cloud control plane vars).
