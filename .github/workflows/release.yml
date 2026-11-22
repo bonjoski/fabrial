@@ -1,0 +1,25 @@
+name: Release Pipeline
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  id-token: write
+  attestations: write
+
+jobs:
+  paved-road-release:
+    uses: bonjoski/.github/.github/workflows/paved-road-release.yml@4934b010b51f3a2947c3a041bfbecee1c561c8bc
+    with:
+      build_command: "go build -trimpath -o dist/fabrial-linux-amd64 ./cmd/fabrial"
+      artifact_path: "dist/fabrial-linux-amd64"
+      provenance_path: "dist/fabrial-linux-amd64.intoto.jsonl"
+      sbom_path: "dist/fabrial.cdx.json"
+      go_version: "1.27"
+      verify_git_signature: true
+      enable_cosign: true
+      publish_github_release: true
