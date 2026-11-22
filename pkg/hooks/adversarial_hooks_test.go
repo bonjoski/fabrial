@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -383,7 +384,7 @@ func TestInitHooks_RejectsSymlinksAndPreservesUserHooks(t *testing.T) {
 				fi, statErr := os.Stat(p.BackupPath)
 				if statErr != nil {
 					t.Errorf("backup %s missing: %v", p.BackupPath, statErr)
-				} else if fi.Mode().Perm() != 0600 {
+				} else if runtime.GOOS != "windows" && fi.Mode().Perm() != 0600 {
 					t.Errorf("backup %s mode = %04o, want 0600", p.BackupPath, fi.Mode().Perm())
 				}
 			}

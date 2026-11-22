@@ -11,6 +11,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -139,13 +140,22 @@ func TestDefaultEvaluator_AllowsBenignCommands(t *testing.T) {
 	}
 }
 
-func TestDefaultEvaluator_ArgusSocketAndStrictMode(t *testing.T) {
-	// 1. Live mock Argus socket denies a package
-	sockDir, err := os.MkdirTemp("/tmp", "fh-argus-")
+func shortSockDir(t *testing.T, prefix string) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping POSIX Unix domain socket test on Windows")
+	}
+	d, err := os.MkdirTemp("/tmp", prefix)
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+	t.Cleanup(func() { _ = os.RemoveAll(d) })
+	return d
+}
+
+func TestDefaultEvaluator_ArgusSocketAndStrictMode(t *testing.T) {
+	// 1. Live mock Argus socket denies a package
+	sockDir := shortSockDir(t, "fh-argus-")
 	sockPath := filepath.Join(sockDir, "argus.sock")
 
 	ln, err := net.Listen("unix", sockPath)
@@ -234,11 +244,7 @@ func TestDefaultEvaluator_EmitsAtomicBLPRReceiptOnDeny(t *testing.T) {
 	}
 
 	// Start a local mock Locksmith UDS signer to verify amortized UDS signing (0 Touch ID)
-	sockDir, err := os.MkdirTemp("/tmp", "fh-ls-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+	sockDir := shortSockDir(t, "fh-ls-")
 	lsSock := filepath.Join(sockDir, "locksmith.sock")
 	ln, err := net.Listen("unix", lsSock)
 	if err != nil {
@@ -336,11 +342,7 @@ func TestDefaultEvaluator_PostToolQueuesAndValidatesPaths(t *testing.T) {
 	}
 
 	// Mock Coppermind UDS socket
-	sockDir, err := os.MkdirTemp("/tmp", "fh-cm-")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.RemoveAll(sockDir) })
+	sockDir := shortSockDir(t, "fh-cm-")
 	cmSock := filepath.Join(sockDir, "coppermind.sock")
 	ln, err := net.Listen("unix", cmSock)
 	if err != nil {

@@ -13,7 +13,7 @@ permissions:
 
 jobs:
   paved-road-release:
-    uses: bonjoski/.github/.github/workflows/paved-road-release.yml@5c95f5f0b0d71a7bf076439e523fd52a61128d25
+    uses: bonjoski/.github/.github/workflows/paved-road-release.yml@06ffe65e825453151f37c66a87cce27611db828c
     with:
       build_command: "go build -trimpath -o dist/fabrial-linux-amd64 ./cmd/fabrial"
       artifact_path: "dist/fabrial-linux-amd64"
