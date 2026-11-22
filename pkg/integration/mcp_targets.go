@@ -22,11 +22,25 @@ const (
 	TargetAll              = "all"
 	TargetAntigravity      = "antigravity"
 	TargetClaude           = "claude"
+	TargetCodex            = "codex"
 	TargetCursor           = "cursor"
+	TargetGemini           = "gemini"
 	TargetSuperEngineering = "superengineering"
+	TargetVSCode           = "vscode"
 
 	conjoinerProxyBinary = "mcp-conjoiner-proxy"
 )
+
+// CanonicalMCPTargetOrder lists all 7 first-class IDE MCP targets in deterministic order.
+var CanonicalMCPTargetOrder = []string{
+	TargetAntigravity,
+	TargetClaude,
+	TargetCodex,
+	TargetCursor,
+	TargetGemini,
+	TargetSuperEngineering,
+	TargetVSCode,
+}
 
 // ErrMCPSymlinkDetected is returned fail-closed when any IDE MCP config file or
 // intermediate config directory is a symbolic link.
@@ -49,8 +63,15 @@ type MCPServerSpec struct {
 
 // MCPInitOptions configures safe multi-IDE MCP dry-run planning or atomic apply.
 type MCPInitOptions struct {
-	WorktreeDir   string
-	HomeDir       string
+	WorktreeDir string
+	HomeDir     string
+	// ConfigDir optionally overrides os.UserConfigDir() for global targets that
+	// store configuration in the OS user config directory (e.g., VS Code's
+	// Code/User/mcp.json). When ConfigDir is empty and HomeDir is explicitly
+	// provided (such as in hermetic tests), global VS Code falls back to
+	// filepath.Join(HomeDir, ".config", "Code", "User", "mcp.json"). When both
+	// ConfigDir and HomeDir are empty, os.UserConfigDir() is queried.
+	ConfigDir     string
 	Global        bool
 	Apply         bool
 	ConjoinerWrap bool
@@ -116,10 +137,11 @@ func CanonicalMCPServers(conjoinerWrap bool, lookPath func(string) (string, erro
 }
 
 // NormalizeMCPTargets validates and expands target names ("all", "antigravity",
-// "claude", "cursor", "superengineering") in canonical deterministic order.
+// "claude", "codex", "cursor", "gemini", "superengineering", "vscode") in
+// canonical deterministic order.
 func NormalizeMCPTargets(raw []string) ([]string, error) {
 	if len(raw) == 0 {
-		return []string{TargetAntigravity, TargetClaude, TargetCursor, TargetSuperEngineering}, nil
+		return append([]string(nil), CanonicalMCPTargetOrder...), nil
 	}
 
 	seen := make(map[string]bool)
@@ -135,25 +157,30 @@ func NormalizeMCPTargets(raw []string) ([]string, error) {
 		for _, tok := range strings.Split(item, ",") {
 			switch strings.ToLower(strings.TrimSpace(tok)) {
 			case "", TargetAll:
-				add(TargetAntigravity)
-				add(TargetClaude)
-				add(TargetCursor)
-				add(TargetSuperEngineering)
+				for _, t := range CanonicalMCPTargetOrder {
+					add(t)
+				}
 			case TargetAntigravity, "agy":
 				add(TargetAntigravity)
 			case TargetClaude, "claude-code", "claudecode":
 				add(TargetClaude)
+			case TargetCodex, "openai-codex", "codex-cli":
+				add(TargetCodex)
 			case TargetCursor:
 				add(TargetCursor)
+			case TargetGemini, "gemini-cli":
+				add(TargetGemini)
 			case TargetSuperEngineering, "super.engineering", "se":
 				add(TargetSuperEngineering)
+			case TargetVSCode, "copilot", "vs-code", "github-copilot":
+				add(TargetVSCode)
 			default:
 				return nil, &ux.FixForwardError{
 					Tool:           "fabrial",
 					Code:           "FABRIAL_INIT_MCP_UNKNOWN_TARGET",
 					Summary:        fmt.Sprintf("Unknown MCP IDE target %q", tok),
 					RemediationCmd: "fabrial init --mcp --target all",
-					WhyOneLiner:    "Supported targets are: all, antigravity, claude, cursor, superengineering.",
+					WhyOneLiner:    "Supported targets are: all, antigravity, claude, codex, cursor, gemini, superengineering, vscode.",
 					DeepWhy:        "Specify --target with one or more comma-separated IDE names, or use --target all to preview/apply all supported local IDE MCP configurations.",
 					ExitCode:       1,
 				}
@@ -182,6 +209,7 @@ func PlanAndApplyMCP(opts MCPInitOptions) (*MCPInitReport, error) {
 		return nil, fmt.Errorf("resolve worktree dir: %w", err)
 	}
 
+	explicitHome := strings.TrimSpace(opts.HomeDir) != ""
 	homeDir := strings.TrimSpace(opts.HomeDir)
 	if homeDir == "" {
 		homeDir, err = os.UserHomeDir()
@@ -189,6 +217,7 @@ func PlanAndApplyMCP(opts MCPInitOptions) (*MCPInitReport, error) {
 			return nil, fmt.Errorf("determine home directory: %w", err)
 		}
 	}
+	configDir := strings.TrimSpace(opts.ConfigDir)
 
 	nowFn := opts.Now
 	if nowFn == nil {
@@ -212,7 +241,7 @@ func PlanAndApplyMCP(opts MCPInitOptions) (*MCPInitReport, error) {
 	}
 
 	for _, target := range targets {
-		baseDir, relPath, err := resolveMCPTargetPath(target, absWorktree, homeDir, opts.Global)
+		baseDir, relPath, err := resolveMCPTargetPath(target, absWorktree, homeDir, configDir, explicitHome, opts.Global)
 		if err != nil {
 			return nil, err
 		}
@@ -227,8 +256,25 @@ func PlanAndApplyMCP(opts MCPInitOptions) (*MCPInitReport, error) {
 	return report, nil
 }
 
-func resolveMCPTargetPath(target, absWorktree, homeDir string, isGlobal bool) (baseDir string, relPath string, err error) {
+func resolveMCPTargetPath(target, absWorktree, homeDir, configDir string, explicitHome, isGlobal bool) (baseDir string, relPath string, err error) {
 	if isGlobal {
+		if target == TargetVSCode {
+			if configDir != "" {
+				return configDir, filepath.Join("Code", "User", "mcp.json"), nil
+			}
+			if explicitHome {
+				return homeDir, filepath.Join(".config", "Code", "User", "mcp.json"), nil
+			}
+			ucd, uErr := os.UserConfigDir()
+			if uErr != nil || strings.TrimSpace(ucd) == "" {
+				if homeDir != "" {
+					return homeDir, filepath.Join(".config", "Code", "User", "mcp.json"), nil
+				}
+				return "", "", fmt.Errorf("determine user config directory for --global vscode integration: %w", uErr)
+			}
+			return ucd, filepath.Join("Code", "User", "mcp.json"), nil
+		}
+
 		if homeDir == "" {
 			return "", "", errors.New("home directory unavailable for --global MCP integration")
 		}
@@ -237,8 +283,12 @@ func resolveMCPTargetPath(target, absWorktree, homeDir string, isGlobal bool) (b
 			return homeDir, filepath.Join(".gemini", "config", "mcp_config.json"), nil
 		case TargetClaude:
 			return homeDir, ".claude.json", nil
+		case TargetCodex:
+			return homeDir, filepath.Join(".codex", "config.toml"), nil
 		case TargetCursor:
 			return homeDir, filepath.Join(".cursor", "mcp.json"), nil
+		case TargetGemini:
+			return homeDir, filepath.Join(".gemini", "settings.json"), nil
 		case TargetSuperEngineering:
 			return homeDir, filepath.Join(".super.engineering", "config.json"), nil
 		}
@@ -248,10 +298,16 @@ func resolveMCPTargetPath(target, absWorktree, homeDir string, isGlobal bool) (b
 			return absWorktree, filepath.Join(".agents", "mcp_config.json"), nil
 		case TargetClaude:
 			return absWorktree, ".mcp.json", nil
+		case TargetCodex:
+			return absWorktree, filepath.Join(".codex", "config.toml"), nil
 		case TargetCursor:
 			return absWorktree, filepath.Join(".cursor", "mcp.json"), nil
+		case TargetGemini:
+			return absWorktree, filepath.Join(".gemini", "settings.json"), nil
 		case TargetSuperEngineering:
 			return absWorktree, filepath.Join(".super.engineering", "config.json"), nil
+		case TargetVSCode:
+			return absWorktree, filepath.Join(".vscode", "mcp.json"), nil
 		}
 	}
 	return "", "", fmt.Errorf("unsupported MCP target %q", target)
@@ -266,6 +322,10 @@ func processMCPTarget(
 	apply bool,
 	nowFn func() time.Time,
 ) (*MCPTargetPlan, error) {
+	if target == TargetCodex {
+		return processCodexTOMLTarget(target, baseDir, relPath, canonical, conjoinerWrapped, apply, nowFn)
+	}
+
 	fullPath := filepath.Join(baseDir, relPath)
 
 	// Strictly reject any symlink along the relative path inside baseDir before reading or writing.
@@ -318,8 +378,30 @@ func processMCPTarget(
 		return nil, fmt.Errorf("lstat %s: %w", fullPath, lErr)
 	}
 
-	serversMap, ok := rawMap["mcpServers"].(map[string]interface{})
-	if !ok || serversMap == nil {
+	rootKey := "mcpServers"
+	requireStdioType := false
+	if target == TargetVSCode {
+		rootKey = "servers"
+		requireStdioType = true
+	}
+
+	var serversMap map[string]interface{}
+	if existingRoot, exists := rawMap[rootKey]; exists && existingRoot != nil {
+		m, ok := existingRoot.(map[string]interface{})
+		if !ok {
+			return nil, &ux.FixForwardError{
+				Tool:           "fabrial",
+				Code:           "FABRIAL_INIT_MCP_INVALID_JSON",
+				Summary:        fmt.Sprintf("Existing IDE config %s has non-object %q field", filepath.Base(fullPath), rootKey),
+				RemediationCmd: fmt.Sprintf("fabrial init --mcp --target %s", target),
+				WhyOneLiner:    fmt.Sprintf("Refusing to overwrite %s because %q is not a JSON object.", filepath.Base(fullPath), rootKey),
+				DeepWhy:        fmt.Sprintf("Expected %q in %s to be a JSON object mapping server names to configurations.", rootKey, ux.SanitizeTerminalText(fullPath)),
+				ExitCode:       1,
+			}
+		}
+		serversMap = m
+	}
+	if serversMap == nil {
 		serversMap = make(map[string]interface{})
 	}
 
@@ -340,32 +422,35 @@ func processMCPTarget(
 			"command": spec.Command,
 			"args":    toInterfaceSlice(spec.Args),
 		}
+		if requireStdioType {
+			desiredMap["type"] = "stdio"
+		}
 
 		existingRaw, exists := serversMap[name]
 		if !exists {
 			serversMap[name] = desiredMap
 			plan.ServersAdded = append(plan.ServersAdded, name)
-			diffLines = append(diffLines, fmt.Sprintf("+ mcpServers.%s: %s %s", name, spec.Command, strings.Join(spec.Args, " ")))
+			diffLines = append(diffLines, fmt.Sprintf("+ %s.%s: %s %s", rootKey, name, spec.Command, strings.Join(spec.Args, " ")))
 			continue
 		}
 
 		existingMap, ok := existingRaw.(map[string]interface{})
-		if !ok || !mcpSpecMatches(existingMap, spec) {
+		if !ok || !mcpSpecMatches(existingMap, spec, requireStdioType) {
 			serversMap[name] = desiredMap
 			plan.ServersUpdated = append(plan.ServersUpdated, name)
-			diffLines = append(diffLines, fmt.Sprintf("~ mcpServers.%s: %s %s", name, spec.Command, strings.Join(spec.Args, " ")))
+			diffLines = append(diffLines, fmt.Sprintf("~ %s.%s: %s %s", rootKey, name, spec.Command, strings.Join(spec.Args, " ")))
 			continue
 		}
 
 		plan.ServersUnchanged = append(plan.ServersUnchanged, name)
-		diffLines = append(diffLines, fmt.Sprintf("= mcpServers.%s: unchanged", name))
+		diffLines = append(diffLines, fmt.Sprintf("= %s.%s: unchanged", rootKey, name))
 	}
 	if len(plan.UserServersPreserved) > 0 {
 		diffLines = append(diffLines, fmt.Sprintf("  preserved user servers: %s", strings.Join(plan.UserServersPreserved, ", ")))
 	}
 	plan.Diff = strings.Join(diffLines, "\n")
 
-	rawMap["mcpServers"] = serversMap
+	rawMap[rootKey] = serversMap
 
 	if !apply {
 		return plan, nil
@@ -382,8 +467,8 @@ func processMCPTarget(
 	if err := json.Unmarshal(outData, &roundTrip); err != nil {
 		return nil, fmt.Errorf("post-merge JSON validation failed for %s: %w", fullPath, err)
 	}
-	if _, ok := roundTrip["mcpServers"].(map[string]interface{}); !ok {
-		return nil, fmt.Errorf("post-merge JSON validation failed: missing mcpServers map in %s", fullPath)
+	if _, ok := roundTrip[rootKey].(map[string]interface{}); !ok {
+		return nil, fmt.Errorf("post-merge JSON validation failed: missing %s map in %s", rootKey, fullPath)
 	}
 
 	// Ensure parent directories exist safely (no symlinks)
@@ -551,7 +636,13 @@ func symlinkFixForwardError(path string) error {
 	})
 }
 
-func mcpSpecMatches(existing map[string]interface{}, desired MCPServerSpec) bool {
+func mcpSpecMatches(existing map[string]interface{}, desired MCPServerSpec, requireStdioType bool) bool {
+	if requireStdioType {
+		t, ok := existing["type"].(string)
+		if !ok || t != "stdio" {
+			return false
+		}
+	}
 	cmd, ok := existing["command"].(string)
 	if !ok || cmd != desired.Command {
 		return false

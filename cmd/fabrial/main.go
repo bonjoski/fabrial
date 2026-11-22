@@ -97,6 +97,9 @@ func main() {
 	case "init":
 		handleInit(args)
 
+	case "hook":
+		handleHook(args)
+
 	case "receipt":
 		handleReceipt(args)
 
@@ -126,7 +129,8 @@ func printUsage() {
 Ambient Session Broker, Multi-Agent Concurrency Coordinator & Scoped Security Fabric.
 
 Usage:
-  fabrial init [--dir <path>] [--mcp [--apply] [--global] [--target all|antigravity|claude|cursor|superengineering] [--conjoiner-wrap]] [--json] [--why]
+  fabrial init [--dir <path>] [--mcp|--hooks] [--apply] [--global] [--target <ide>] [--conjoiner-wrap] [--json] [--why]
+  fabrial hook eval --client <claude|cursor|gemini> --event <pre-tool|post-tool> [--strict] [--worktree <dir>]
   fabrial receipt [verify|status] [--session <id>] [--dir <path>] [--pubkey-b64 <b64>] [--json] [--why]
   fabrial check [--diff] [--dir <path>] [--ai-target <local-url>] [--json] [--why]
   fabrial explain <topic> [--json] [--why]
@@ -446,11 +450,12 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 	asJSON := false
 	showWhy := false
 	mcpMode := false
+	hooksMode := false
 	applyMode := false
 	isGlobal := false
 	conjoinerWrap := false
 	targetDir := "."
-	var mcpTargets []string
+	var targets []string
 
 	// Pre-scan output mode flags so even flag-parsing errors honor --json and --why.
 	for _, arg := range args {
@@ -470,6 +475,8 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 			showWhy = true
 		case "--mcp":
 			mcpMode = true
+		case "--hooks":
+			hooksMode = true
 		case "--apply":
 			applyMode = true
 		case "--global", "-g":
@@ -481,15 +488,15 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 				ffe := &ux.FixForwardError{
 					Tool:           "fabrial",
 					Code:           "FABRIAL_INIT_MISSING_TARGET",
-					Summary:        "Flag --target requires an IDE name (all, antigravity, claude, cursor, superengineering)",
+					Summary:        "Flag --target requires an IDE name (MCP: all, antigravity, claude, codex, cursor, gemini, superengineering, vscode; Hooks: all, claude, cursor, gemini)",
 					RemediationCmd: "fabrial init --mcp --target all",
-					WhyOneLiner:    "Specify which local IDE MCP config file(s) to preview or update.",
+					WhyOneLiner:    "Specify which local IDE config file(s) to preview or update.",
 					ExitCode:       1,
 				}
 				_ = ffe.Render(stderr, asJSON, showWhy)
 				return ffe.ExitCode
 			}
-			mcpTargets = append(mcpTargets, args[i+1])
+			targets = append(targets, args[i+1])
 			i++
 		case "--dir", "-d":
 			if i+1 >= len(args) {
@@ -508,19 +515,22 @@ func runInit(args []string, stdout, stderr io.Writer) int {
 			targetDir = args[i+1]
 			i++
 		case "help", "-h", "--help":
-			_, _ = fmt.Fprintln(stdout, `Usage: fabrial init [--dir <path>] [--mcp [--apply] [--global] [--target <ide>] [--conjoiner-wrap]] [--json] [--why]
+			_, _ = fmt.Fprintln(stdout, `Usage: fabrial init [--dir <path>] [--mcp|--hooks] [--apply] [--global] [--target <ide>] [--conjoiner-wrap] [--json] [--why]
 Strictly read-only 60-second stack & AI SDK detector (writes zero YAML files).
-With --mcp, previews canonical UB-MCP-v1 server wiring across local IDEs (dry-run by default; pass --apply to write).
+With --mcp, previews canonical UB-MCP-v1 server wiring across 7 local IDEs (dry-run by default; pass --apply to write).
+With --hooks, previews push-based native IDE lifecycle hooks for Claude Code, Cursor & Gemini CLI (dry-run by default; pass --apply to write).
 
 Options:
   --dir, -d <path>     Workspace root directory to inspect (default: .)
   --mcp                Preview/wire canonical MCP servers (coppermind, argus, airlock, aegisbox, locksmith)
-  --apply              Opt-in to apply --mcp changes atomically with .bak backups and Lstat symlink guards
-  --global, -g         Target user-global IDE MCP configs (~/.gemini/config/mcp_config.json, ~/.claude.json, ~/.cursor/mcp.json)
-  --target <ide>       IDE target: all, antigravity, claude, cursor, superengineering (default: all)
-  --conjoiner-wrap     Wrap MCP servers through mcp-conjoiner-proxy when installed on PATH
+  --hooks              Preview/wire native IDE lifecycle hooks (fabrial hook eval) for Claude Code, Cursor & Gemini CLI
+  --apply              Opt-in to apply --mcp or --hooks changes atomically with .bak backups and Lstat symlink guards
+  --global, -g         Target user-global IDE configs (~/.claude.json, ~/.codex/config.toml, ~/.cursor/mcp.json, ~/.gemini/settings.json, etc.)
+  --target <ide>       MCP targets: all, antigravity, claude, codex, cursor, gemini, superengineering, vscode
+                       Hook targets: all, claude, cursor, gemini (default: all)
+  --conjoiner-wrap     Wrap MCP servers through mcp-conjoiner-proxy when installed on PATH (--mcp only)
   --json               Emit structured single-line JSON for AI coding agents
-  --why                Show progressive disclosure breakdown, detected manifests, or MCP diffs`)
+  --why                Show progressive disclosure breakdown, detected manifests, or config diffs`)
 			return 0
 		default:
 			if strings.HasPrefix(arg, "-") {
@@ -529,8 +539,8 @@ Options:
 					Code:           "FABRIAL_INIT_UNKNOWN_FLAG",
 					Summary:        fmt.Sprintf("Unrecognized flag %q for fabrial init", arg),
 					RemediationCmd: "fabrial init --why",
-					WhyOneLiner:    "fabrial init accepts --dir, --mcp, --apply, --global, --target, --conjoiner-wrap, --json, and --why.",
-					DeepWhy:        "To avoid unintended mutations, fabrial init never writes files unless you explicitly pass --mcp --apply.",
+					WhyOneLiner:    "fabrial init accepts --dir, --mcp, --hooks, --apply, --global, --target, --conjoiner-wrap, --json, and --why.",
+					DeepWhy:        "To avoid unintended mutations, fabrial init never writes files unless you explicitly pass --mcp --apply or --hooks --apply.",
 					ExitCode:       1,
 				}
 				_ = ffe.Render(stderr, asJSON, showWhy)
@@ -540,18 +550,35 @@ Options:
 		}
 	}
 
-	if applyMode && !mcpMode {
+	if mcpMode && hooksMode {
 		ffe := &ux.FixForwardError{
 			Tool:           "fabrial",
-			Code:           "FABRIAL_INIT_APPLY_REQUIRES_MCP",
-			Summary:        "Flag --apply is only valid alongside --mcp",
-			RemediationCmd: "fabrial init --mcp --apply",
-			WhyOneLiner:    "Plain `fabrial init` is strictly read-only and never writes YAML files.",
-			DeepWhy:        "Pass `--mcp` to preview IDE MCP config changes, and `--mcp --apply` to atomically write them with .bak backups.",
+			Code:           "FABRIAL_INIT_MUTUALLY_EXCLUSIVE_MODES",
+			Summary:        "Flags --mcp and --hooks cannot be combined in a single invocation",
+			RemediationCmd: "fabrial init --mcp --apply && fabrial init --hooks --apply",
+			WhyOneLiner:    "Run --mcp and --hooks separately so each dry-run diff and --json report emits a single structured payload.",
 			ExitCode:       1,
 		}
 		_ = ffe.Render(stderr, asJSON, showWhy)
 		return ffe.ExitCode
+	}
+
+	if applyMode && !mcpMode && !hooksMode {
+		ffe := &ux.FixForwardError{
+			Tool:           "fabrial",
+			Code:           "FABRIAL_INIT_APPLY_REQUIRES_MCP",
+			Summary:        "Flag --apply is only valid alongside --mcp or --hooks",
+			RemediationCmd: "fabrial init --mcp --apply",
+			WhyOneLiner:    "Plain `fabrial init` is strictly read-only and never writes YAML files.",
+			DeepWhy:        "Pass `--mcp` or `--hooks` to preview IDE config changes, and add `--apply` to atomically write them with .bak backups.",
+			ExitCode:       1,
+		}
+		_ = ffe.Render(stderr, asJSON, showWhy)
+		return ffe.ExitCode
+	}
+
+	if hooksMode {
+		return runInitHooks(targetDir, isGlobal, applyMode, asJSON, showWhy, targets, stdout, stderr)
 	}
 
 	if mcpMode {
@@ -560,7 +587,7 @@ Options:
 			Global:        isGlobal,
 			Apply:         applyMode,
 			ConjoinerWrap: conjoinerWrap,
-			Targets:       mcpTargets,
+			Targets:       targets,
 		})
 		if err != nil {
 			var ffe *ux.FixForwardError

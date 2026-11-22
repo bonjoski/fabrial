@@ -136,3 +136,67 @@ func TestFabrialCLI_InitMCPDryRunApplyAndSymlinkReject(t *testing.T) {
 		t.Fatalf("unexpected error code %q", ffe.Code)
 	}
 }
+
+func TestFabrialCLI_InitMCP_NewTargetsCodexGeminiVSCode(t *testing.T) {
+	dir := t.TempDir()
+	var out, errBuf bytes.Buffer
+	code := runInit([]string{"--dir", dir, "--mcp", "--apply", "--target", "codex,gemini,vscode", "--json"}, &out, &errBuf)
+	if code != 0 {
+		t.Fatalf("init --mcp --apply codex,gemini,vscode exited %d, stderr: %s", code, errBuf.String())
+	}
+	for _, rel := range []string{
+		filepath.Join(".codex", "config.toml"),
+		filepath.Join(".gemini", "settings.json"),
+		filepath.Join(".vscode", "mcp.json"),
+	} {
+		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
+			t.Fatalf("expected %s to be written: %v", rel, err)
+		}
+	}
+}
+
+func TestFabrialCLI_InitHooks_DryRunApplyAndMutuallyExclusive(t *testing.T) {
+	dir := t.TempDir()
+
+	// Mutually exclusive --mcp --hooks fails cleanly with FixForwardError JSON
+	var out, errBuf bytes.Buffer
+	code := runInit([]string{"--dir", dir, "--mcp", "--hooks", "--json"}, &out, &errBuf)
+	if code == 0 {
+		t.Fatal("expected non-zero exit when combining --mcp and --hooks")
+	}
+	var ffe ux.FixForwardError
+	if err := json.Unmarshal(errBuf.Bytes(), &ffe); err != nil {
+		t.Fatalf("expected FixForwardError JSON: %v (raw: %s)", err, errBuf.String())
+	}
+	if ffe.Code != "FABRIAL_INIT_MUTUALLY_EXCLUSIVE_MODES" {
+		t.Fatalf("unexpected error code %q", ffe.Code)
+	}
+
+	// Dry-run writes 0 files
+	out.Reset()
+	errBuf.Reset()
+	code = runInit([]string{"--dir", dir, "--hooks", "--target", "claude,cursor,gemini", "--json"}, &out, &errBuf)
+	if code != 0 {
+		t.Fatalf("init --hooks dry-run exited %d, stderr: %s", code, errBuf.String())
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "settings.json")); !os.IsNotExist(err) {
+		t.Fatal("dry-run wrote .claude/settings.json")
+	}
+
+	// --apply writes all 3 native hook configs
+	out.Reset()
+	errBuf.Reset()
+	code = runInit([]string{"--dir", dir, "--hooks", "--apply", "--target", "claude,cursor,gemini", "--json"}, &out, &errBuf)
+	if code != 0 {
+		t.Fatalf("init --hooks --apply exited %d, stderr: %s", code, errBuf.String())
+	}
+	for _, rel := range []string{
+		filepath.Join(".claude", "settings.json"),
+		filepath.Join(".cursor", "hooks.json"),
+		filepath.Join(".gemini", "settings.json"),
+	} {
+		if _, err := os.Stat(filepath.Join(dir, rel)); err != nil {
+			t.Fatalf("expected %s to be written: %v", rel, err)
+		}
+	}
+}
