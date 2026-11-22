@@ -291,7 +291,7 @@ func TestBuildEnvironment_SafeHarborNoCloudVars(t *testing.T) {
 	if master.Environment["FABRIAL_WORKTREE_ROOT"] != worktree {
 		t.Fatalf("master missing FABRIAL_WORKTREE_ROOT: %+v", master.Environment)
 	}
-	if !strings.HasSuffix(master.Environment["FABRIAL_RECEIPT_DIR"], "/.fabrial/receipts/"+string(master.ID)) {
+	if master.Environment["FABRIAL_RECEIPT_DIR"] != filepath.Join(worktree, ".fabrial", "receipts", string(master.ID)) {
 		t.Fatalf("unexpected master FABRIAL_RECEIPT_DIR: %q", master.Environment["FABRIAL_RECEIPT_DIR"])
 	}
 
@@ -302,7 +302,7 @@ func TestBuildEnvironment_SafeHarborNoCloudVars(t *testing.T) {
 	if child.Environment["FABRIAL_WORKTREE_ROOT"] != worktree {
 		t.Fatalf("child missing FABRIAL_WORKTREE_ROOT: %+v", child.Environment)
 	}
-	if !strings.HasSuffix(child.Environment["FABRIAL_RECEIPT_DIR"], "/.fabrial/receipts/"+string(child.ID)) {
+	if child.Environment["FABRIAL_RECEIPT_DIR"] != filepath.Join(worktree, ".fabrial", "receipts", string(child.ID)) {
 		t.Fatalf("unexpected child FABRIAL_RECEIPT_DIR: %q", child.Environment["FABRIAL_RECEIPT_DIR"])
 	}
 	if child.Environment["FABRIAL_RECEIPT_DIR"] == master.Environment["FABRIAL_RECEIPT_DIR"] {
