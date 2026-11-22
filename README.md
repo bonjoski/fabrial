@@ -74,6 +74,8 @@ Every major use case for Fabrial is backed by dedicated, task-oriented recipes i
 
 | Use Case | Scenario & Quick Recipe | Full Guide |
 | :--- | :--- | :--- |
+| **60-Second Paved-Road Onboarding (UB-CLI-v2)** | Auto-detect repo stack & AI SDKs in read-only mode with zero YAML written, plus `--why` progressive disclosure:<br/>`fabrial init` / `fabrial init --why` | [Guide](docs/use-cases/01-sixty-second-paved-road-onboarding.md) |
+| **Local Diff-Only PR Gate Dry-Run** | Preview proven diff checks (`argus`, `soulcaster`, optional loopback `aegisbox`) across parallel worktrees with zero Touch ID prompts:<br/>`fabrial check --diff --why` | [Guide](docs/use-cases/01-sixty-second-paved-road-onboarding.md) |
 | **Transparent Agent Command Routing** | Automatically dispatch linters to <15ms kernel sandboxes and package installs to microVMs:<br/>`fabrial run npm install lodash` | [Guide](docs/use-cases/01-transparent-command-routing.md) |
 | **Ambient Session Brokerage** | Start an isolated dev session with scoped credentials and zero Hop Tax:<br/>`eval $(fabrial session begin --ttl 30m --scopes read,build)` | [Guide](docs/use-cases/02-ambient-session-broker.md) |
 | **Multi-Agent Sub-Sessions ($N=8$)** | Run parallel subagents across git worktrees without port or lock contention:<br/>`fabrial session child --parent $SES_ID --task "refactor"` | [Guide](docs/use-cases/03-multi-agent-subsessions.md) |

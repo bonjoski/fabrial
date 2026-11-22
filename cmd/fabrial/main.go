@@ -18,14 +18,17 @@ import (
 	"golang.org/x/term"
 
 	"github.com/bonjoski/fabrial/pkg/auth"
+	"github.com/bonjoski/fabrial/pkg/check"
 	"github.com/bonjoski/fabrial/pkg/circuitbreaker"
 	"github.com/bonjoski/fabrial/pkg/doctor"
+	"github.com/bonjoski/fabrial/pkg/initscan"
 	"github.com/bonjoski/fabrial/pkg/integration"
 	"github.com/bonjoski/fabrial/pkg/queue"
 	"github.com/bonjoski/fabrial/pkg/router"
 	"github.com/bonjoski/fabrial/pkg/server"
 	"github.com/bonjoski/fabrial/pkg/session"
 	"github.com/bonjoski/fabrial/pkg/supervisor"
+	"github.com/bonjoski/fabrial/pkg/ux"
 	"github.com/bonjoski/fabrial/pkg/version"
 )
 
@@ -90,7 +93,16 @@ func main() {
 	case "daemon":
 		handleDaemon(args)
 
-	case "integrate", "init":
+	case "init":
+		handleInit(args)
+
+	case "check":
+		handleCheck(args)
+
+	case "explain":
+		handleExplain(args)
+
+	case "integrate":
 		handleIntegrate(args)
 
 	case "circuit-breaker", "breaker":
@@ -110,6 +122,9 @@ func printUsage() {
 Ambient Session Broker, Multi-Agent Concurrency Coordinator & Scoped Security Fabric.
 
 Usage:
+  fabrial init [--dir <path>] [--json] [--why]
+  fabrial check [--diff] [--dir <path>] [--ai-target <local-url>] [--json] [--why]
+  fabrial explain <topic> [--json] [--why]
   fabrial launch [--profile agent] [--] <editor-or-agent> [args...]
   fabrial session [begin|child|env|list|kill|launch] [flags]
   fabrial queue [status]
@@ -413,6 +428,350 @@ func handleCircuitBreaker(args []string) {
 	default:
 		fmt.Println("Usage: fabrial circuit-breaker [listen|status] [--socket <path>]")
 	}
+}
+
+func handleInit(args []string) {
+	code := runInit(args, os.Stdout, os.Stderr)
+	if code != 0 {
+		os.Exit(code)
+	}
+}
+
+func runInit(args []string, stdout, stderr io.Writer) int {
+	asJSON := false
+	showWhy := false
+	targetDir := "."
+
+	// Pre-scan output mode flags so even flag-parsing errors honor --json and --why.
+	for _, arg := range args {
+		if arg == "--json" {
+			asJSON = true
+		} else if arg == "--why" {
+			showWhy = true
+		}
+	}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--json":
+			asJSON = true
+		case "--why":
+			showWhy = true
+		case "--dir", "-d":
+			if i+1 >= len(args) {
+				ffe := &ux.FixForwardError{
+					Tool:           "fabrial",
+					Code:           "FABRIAL_INIT_MISSING_DIR",
+					Summary:        "Flag --dir requires a workspace directory argument",
+					RemediationCmd: "fabrial init --dir .",
+					WhyOneLiner:    "fabrial init scans a single local workspace root in read-only mode.",
+					DeepWhy:        "Provide a local repository directory with --dir <path> or omit it to scan the current working directory.",
+					ExitCode:       1,
+				}
+				_ = ffe.Render(stderr, asJSON, showWhy)
+				return ffe.ExitCode
+			}
+			targetDir = args[i+1]
+			i++
+		case "help", "-h", "--help":
+			_, _ = fmt.Fprintln(stdout, `Usage: fabrial init [--dir <path>] [--json] [--why]
+Strictly read-only 60-second stack & AI SDK detector (writes zero YAML files).
+
+Options:
+  --dir, -d <path>   Workspace root directory to inspect (default: .)
+  --json             Emit structured single-line JSON for AI coding agents
+  --why              Show progressive disclosure breakdown, detected manifests & safety tips`)
+			return 0
+		default:
+			if strings.HasPrefix(arg, "-") {
+				ffe := &ux.FixForwardError{
+					Tool:           "fabrial",
+					Code:           "FABRIAL_INIT_UNKNOWN_FLAG",
+					Summary:        fmt.Sprintf("Unrecognized flag %q for fabrial init", arg),
+					RemediationCmd: "fabrial init --why",
+					WhyOneLiner:    "fabrial init only accepts --dir, --json, and --why (strictly read-only by default).",
+					DeepWhy:        "To avoid unintended mutations, fabrial init never writes YAML or mutates shell profiles by default.",
+					ExitCode:       1,
+				}
+				_ = ffe.Render(stderr, asJSON, showWhy)
+				return ffe.ExitCode
+			}
+			targetDir = arg
+		}
+	}
+
+	res, err := initscan.Scan(initscan.ScanOptions{Dir: targetDir})
+	if err != nil {
+		if ffe, ok := err.(*ux.FixForwardError); ok {
+			_ = ffe.Render(stderr, asJSON, showWhy)
+			if ffe.ExitCode != 0 {
+				return ffe.ExitCode
+			}
+			return 1
+		}
+		ffe := &ux.FixForwardError{
+			Tool:           "fabrial",
+			Code:           "FABRIAL_INIT_SCAN_FAILED",
+			Summary:        err.Error(),
+			RemediationCmd: "fabrial init",
+			WhyOneLiner:    "Ensure the target directory exists and is readable on your local workstation.",
+			ExitCode:       1,
+		}
+		_ = ffe.Render(stderr, asJSON, showWhy)
+		return 1
+	}
+
+	if err := res.Render(stdout, asJSON, showWhy); err != nil {
+		_, _ = fmt.Fprintf(stderr, "fabrial: failed to render init output: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func handleCheck(args []string) {
+	code := runCheck(args, os.Stdout, os.Stderr)
+	if code != 0 {
+		os.Exit(code)
+	}
+}
+
+func runCheck(args []string, stdout, stderr io.Writer) int {
+	asJSON := false
+	showWhy := false
+	diffOnly := true
+	targetDir := "."
+	baseRef := "HEAD"
+	aiTarget := ""
+
+	for _, arg := range args {
+		if arg == "--json" {
+			asJSON = true
+		} else if arg == "--why" {
+			showWhy = true
+		}
+	}
+
+	for i := 0; i < len(args); i++ {
+		arg := args[i]
+		switch arg {
+		case "--diff":
+			diffOnly = true
+		case "--json":
+			asJSON = true
+		case "--why":
+			showWhy = true
+		case "--dir", "-d":
+			if i+1 >= len(args) {
+				ffe := &ux.FixForwardError{
+					Tool:           "fabrial",
+					Code:           "FABRIAL_CHECK_MISSING_DIR",
+					Summary:        "Flag --dir requires a workspace directory argument",
+					RemediationCmd: "fabrial check --diff --dir .",
+					WhyOneLiner:    "fabrial check runs strictly inside a single local repository worktree.",
+					DeepWhy:        "Provide a local repository directory with --dir <path> or omit it to check the current working directory.",
+					ExitCode:       1,
+				}
+				_ = ffe.Render(stderr, asJSON, showWhy)
+				return ffe.ExitCode
+			}
+			targetDir = args[i+1]
+			i++
+		case "--base":
+			if i+1 >= len(args) {
+				ffe := &ux.FixForwardError{
+					Tool:           "fabrial",
+					Code:           "FABRIAL_CHECK_MISSING_BASE",
+					Summary:        "Flag --base requires a git reference argument",
+					RemediationCmd: "fabrial check --diff --base HEAD",
+					WhyOneLiner:    "Pass a base branch or commit ref (default: HEAD) for differential patch verification.",
+					ExitCode:       1,
+				}
+				_ = ffe.Render(stderr, asJSON, showWhy)
+				return ffe.ExitCode
+			}
+			baseRef = args[i+1]
+			i++
+		case "--ai-target":
+			if i+1 >= len(args) {
+				ffe := &ux.FixForwardError{
+					Tool:           "fabrial",
+					Code:           "FABRIAL_CHECK_MISSING_AI_TARGET",
+					Summary:        "Flag --ai-target requires a loopback URL (e.g. http://127.0.0.1:8080)",
+					RemediationCmd: "fabrial check --diff --ai-target http://127.0.0.1:8080",
+					WhyOneLiner:    "Local AI safety probes strictly target loopback endpoints (127.0.0.1, localhost, ::1).",
+					ExitCode:       1,
+				}
+				_ = ffe.Render(stderr, asJSON, showWhy)
+				return ffe.ExitCode
+			}
+			aiTarget = args[i+1]
+			i++
+		case "help", "-h", "--help":
+			_, _ = fmt.Fprintln(stdout, `Usage: fabrial check [--diff] [--dir <path>] [--base <ref>] [--ai-target <local-url>] [--json] [--why]
+Worktree-local dry-run of the RFC-2026-11-22-48 diff-only paved-road PR gate (zero shared locks, zero Touch ID prompts).
+
+Options:
+  --diff                     Run diff-only proven checks (default: true)
+  --dir, -d <path>           Workspace worktree directory to check (default: .)
+  --base <ref>               Base git ref for soulcaster verify-patch (default: HEAD)
+  --ai-target <local-url>    Optional loopback URL (127.0.0.1 / localhost / ::1) for aegisbox AI safety probes
+  --json                     Emit structured single-line JSON for AI coding agents
+  --why                      Show progressive disclosure breakdown of each check and missing-tool install hints`)
+			return 0
+		default:
+			if strings.HasPrefix(arg, "-") {
+				ffe := &ux.FixForwardError{
+					Tool:           "fabrial",
+					Code:           "FABRIAL_CHECK_UNKNOWN_FLAG",
+					Summary:        fmt.Sprintf("Unrecognized flag %q for fabrial check", arg),
+					RemediationCmd: "fabrial check --diff --why",
+					WhyOneLiner:    "fabrial check accepts --diff, --dir, --base, --ai-target, --json, and --why.",
+					DeepWhy:        "Run `fabrial check --help` to inspect supported local PR dry-run options.",
+					ExitCode:       1,
+				}
+				_ = ffe.Render(stderr, asJSON, showWhy)
+				return ffe.ExitCode
+			}
+			targetDir = arg
+		}
+	}
+
+	res, err := check.Run(context.Background(), check.CheckOptions{
+		Dir:      targetDir,
+		DiffOnly: diffOnly,
+		BaseRef:  baseRef,
+		AITarget: aiTarget,
+		Timeout:  check.DefaultCheckTimeout,
+	})
+	if err != nil {
+		if ffe, ok := err.(*ux.FixForwardError); ok {
+			_ = ffe.Render(stderr, asJSON, showWhy)
+			if ffe.ExitCode != 0 {
+				return ffe.ExitCode
+			}
+			return 1
+		}
+		ffe := &ux.FixForwardError{
+			Tool:           "fabrial",
+			Code:           "FABRIAL_CHECK_FAILED",
+			Summary:        err.Error(),
+			RemediationCmd: "fabrial check --diff --why",
+			WhyOneLiner:    "Ensure the target worktree exists locally and retry.",
+			ExitCode:       1,
+		}
+		_ = ffe.Render(stderr, asJSON, showWhy)
+		return 1
+	}
+
+	if err := res.Render(stdout, asJSON, showWhy); err != nil {
+		_, _ = fmt.Fprintf(stderr, "fabrial: failed to render check output: %v\n", err)
+		return 1
+	}
+	if !res.Passed {
+		return 1
+	}
+	return 0
+}
+
+func handleExplain(args []string) {
+	code := runExplain(args, os.Stdout, os.Stderr)
+	if code != 0 {
+		os.Exit(code)
+	}
+}
+
+func runExplain(args []string, stdout, stderr io.Writer) int {
+	asJSON := false
+	topic := "init"
+	for _, a := range args {
+		switch a {
+		case "--json":
+			asJSON = true
+		case "--why":
+			// explain always renders full --why disclosure
+		case "-h", "--help", "help":
+			_, _ = fmt.Fprintln(stdout, "Usage: fabrial explain <init|check|sandbox|secrets|slopsquat> [--json]")
+			return 0
+		default:
+			if !strings.HasPrefix(a, "-") {
+				topic = strings.ToLower(strings.TrimSpace(a))
+			}
+		}
+	}
+
+	explanations := map[string]*ux.FixForwardError{
+		"init": {
+			Tool:           "fabrial",
+			Code:           "FABRIAL_EXPLAIN_INIT",
+			Summary:        "Zero-config 60-second paved-road onboarding via `fabrial init`",
+			RemediationCmd: "fabrial init --why",
+			WhyOneLiner:    "Auto-detects Go, Node, Python, Rust, and AI SDKs in read-only mode with zero YAML written.",
+			DeepWhy:        "fabrial init uses os.OpenRoot (depth 1, <=256KB per manifest, symlinks skipped) so it never traverses outside your repo or touches dotfiles. All controls run 100% locally on your workstation.",
+			References:     []string{"docs/use-cases/01-sixty-second-paved-road-onboarding.md"},
+			ExitCode:       0,
+		},
+		"check": {
+			Tool:           "fabrial",
+			Code:           "FABRIAL_EXPLAIN_CHECK",
+			Summary:        "Worktree-local dry-run of the diff-only PR gate (`fabrial check --diff`)",
+			RemediationCmd: "fabrial check --diff --why",
+			WhyOneLiner:    "Runs argus, soulcaster, and optional loopback aegisbox probes locally with zero Touch ID prompts and proven-only output.",
+			DeepWhy:        "fabrial check mirrors RFC-2026-11-22-48 locally across N=8 concurrent git worktrees with zero shared lock files, 10s per-check timeouts, strict loopback-only --ai-target validation, and calm Fix-Forward reporting.",
+			References:     []string{"docs/use-cases/01-sixty-second-paved-road-onboarding.md", "RFC-2026-11-22-48"},
+			ExitCode:       0,
+		},
+		"sandbox": {
+			Tool:           "fabrial",
+			Code:           "FABRIAL_EXPLAIN_SANDBOX",
+			Summary:        "Dynamic two-tier local execution confinement (Airlock + Aegisbox)",
+			RemediationCmd: "fabrial run -- npm test",
+			WhyOneLiner:    "Linters and tests run in <15ms Tier 1 kernel confinement; installs run in Tier 2 microVMs.",
+			DeepWhy:        "Tier 1 (Airlock) uses macOS Seatbelt / Linux Landlock to block ~/.ssh, ~/.aws, and .env reads with <15ms overhead. Tier 2 (Aegisbox) uses local Apple VZ / KVM microVMs for untrusted package scripts.",
+			References:     []string{"OWASP-LLM06", "CWE-250"},
+			ExitCode:       0,
+		},
+		"secrets": {
+			Tool:           "fabrial",
+			Code:           "FABRIAL_EXPLAIN_SECRETS",
+			Summary:        "Hardware-backed secret injection instead of plaintext .env files",
+			RemediationCmd: "locksmith migrate .env",
+			WhyOneLiner:    "Moves plaintext keys into Touch ID / TPM memory so git commits and AI agents cannot scrape them.",
+			DeepWhy:        "locksmith migrate .env rejects symlink traps via os.OpenRoot + Lstat, imports keys in a single amortized biometric write, hardens .gitignore, and zero-overwrites .env on disk.",
+			References:     []string{"CWE-312", "CWE-798"},
+			ExitCode:       0,
+		},
+		"slopsquat": {
+			Tool:           "fabrial",
+			Code:           "FABRIAL_EXPLAIN_SLOPSQUAT",
+			Summary:        "Pre-flight AI package hallucination & typosquat interception via Argus",
+			RemediationCmd: "argus explain <package> --why",
+			WhyOneLiner:    "Stops LLMs from installing newly registered typosquatted packages with malicious install hooks.",
+			DeepWhy:        "Adversaries register commonly hallucinated LLM package names with postinstall credential stealers. Argus checks package provenance and suggests safe canonical packages via strict allowlist quoting.",
+			References:     []string{"OWASP-LLM03", "CWE-829"},
+			ExitCode:       0,
+		},
+	}
+
+	entry, ok := explanations[topic]
+	if !ok {
+		ffe := &ux.FixForwardError{
+			Tool:           "fabrial",
+			Code:           "FABRIAL_EXPLAIN_UNKNOWN_TOPIC",
+			Summary:        fmt.Sprintf("Unknown explain topic %q", topic),
+			RemediationCmd: "fabrial explain init",
+			WhyOneLiner:    "Available topics: init, sandbox, secrets, slopsquat.",
+			DeepWhy:        "Run `fabrial explain <topic>` with one of: init, sandbox, secrets, slopsquat.",
+			ExitCode:       1,
+		}
+		_ = ffe.Render(stderr, asJSON, true)
+		return 1
+	}
+
+	if err := entry.Render(stdout, asJSON, true); err != nil {
+		return 1
+	}
+	return 0
 }
 
 func handleIntegrate(args []string) {

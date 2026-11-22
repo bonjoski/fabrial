@@ -18,6 +18,7 @@ This directory provides concrete, task-oriented recipes for common developer wor
 
 | Recipe | Problem Addressed | Primary CLI Commands | Isolation Tier |
 | :--- | :--- | :--- | :--- |
+| **[01a. 60-Second Paved-Road Onboarding](01-sixty-second-paved-road-onboarding.md)** | Zero-config repo & AI SDK detection (`0 YAML written`), calm Fix-Forward errors, and `--why` progressive disclosure. | `fabrial init`<br/>`fabrial init --why`<br/>`fabrial explain sandbox` | Local Workstation (Read-Only) |
 | **[01. Transparent Command Routing](01-transparent-command-routing.md)** | Automatically route linters to <15ms kernel sandboxes and untrusted builds/package managers to hardware microVMs without changing agent prompts. | `fabrial run <cmd>`<br/>`fabrial exec --profile agent -- <cmd>` | Tier 1 (Airlock) /<br/>Tier 2 (Aegisbox) |
 | **[02. Ambient Session Brokerage](02-ambient-session-broker.md)** | Start an autonomous dev session where environment variables, proxy configurations, and credentials are set up with zero Hop Tax. | `fabrial session begin --ttl 30m`<br/>`fabrial session env` | Ambient Shell |
 | **[03. Multi-Agent Sub-Sessions ($N=8$)](03-multi-agent-subsessions.md)** | Concurrently run up to 8 parallel subagents across distinct git worktrees without port collisions, biometric stalls, or file lock contention. | `fabrial session child --parent <id>` | Scoped Worktree |
