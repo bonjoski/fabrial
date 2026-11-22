@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -100,7 +101,7 @@ func TestInitMCP_DryRunBackupAndAtomicMerge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if bakInfo.Mode().Perm() != 0600 {
+	if runtime.GOOS != "windows" && bakInfo.Mode().Perm() != 0600 {
 		t.Fatalf("expected 0600 permissions on backup, got %04o", bakInfo.Mode().Perm())
 	}
 
@@ -113,7 +114,7 @@ func TestInitMCP_DryRunBackupAndAtomicMerge(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if mergedInfo.Mode().Perm() != 0600 {
+	if runtime.GOOS != "windows" && mergedInfo.Mode().Perm() != 0600 {
 		t.Fatalf("expected 0600 permissions on merged config, got %04o", mergedInfo.Mode().Perm())
 	}
 

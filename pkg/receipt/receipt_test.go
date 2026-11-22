@@ -12,6 +12,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -141,7 +142,7 @@ func TestStore_AtomicWriteAndGitExclude(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat written receipt: %v", err)
 	}
-	if fi.Mode().Perm() != 0600 {
+	if runtime.GOOS != "windows" && fi.Mode().Perm() != 0600 {
 		t.Fatalf("expected 0600 permissions on receipt file, got %04o", fi.Mode().Perm())
 	}
 
@@ -150,7 +151,7 @@ func TestStore_AtomicWriteAndGitExclude(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat session dir: %v", err)
 	}
-	if dfi.Mode().Perm() != 0700 {
+	if runtime.GOOS != "windows" && dfi.Mode().Perm() != 0700 {
 		t.Fatalf("expected 0700 permissions on session dir, got %04o", dfi.Mode().Perm())
 	}
 

@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -272,7 +273,7 @@ func TestBuildEnvironment_SafeHarborNoCloudVars(t *testing.T) {
 	if env["FABRIAL_WORKTREE_ROOT"] != worktree {
 		t.Fatalf("expected FABRIAL_WORKTREE_ROOT=%q, got %q", worktree, env["FABRIAL_WORKTREE_ROOT"])
 	}
-	wantReceiptDir := worktree + "/.fabrial/receipts/" + string(sessionID)
+	wantReceiptDir := filepath.Join(worktree, ".fabrial", "receipts", string(sessionID))
 	if env["FABRIAL_RECEIPT_DIR"] != wantReceiptDir {
 		t.Fatalf("expected FABRIAL_RECEIPT_DIR=%q, got %q", wantReceiptDir, env["FABRIAL_RECEIPT_DIR"])
 	}
