@@ -1,7 +1,7 @@
-github.com/bonjoski/airlock v0.10.1 h1:NwG/J3Lt2WmIIvAqr4O0r+TkgxF47kdpC3TyN5V4gZs=
-github.com/bonjoski/airlock v0.10.1/go.mod h1:HO47iFZd5m6+12A1unprqi6e0M4GTQdMw4A1VtlOrpI=
-github.com/bonjoski/shield v0.1.0 h1:XnvwArIVkcHQg3rb/SYT4Z2O1iT5L465d+JmXvcUKwU=
-github.com/bonjoski/shield v0.1.0/go.mod h1:VWm7DEsydjtT18AsbJ0cg7I0OBOUZsIBUqAGWRNuoXE=
+github.com/bonjoski/airlock v0.11.0 h1:G/Y9hN+GmmeFpaPMbpfHiE5u2tMvrtLBNDo5hFVrv9s=
+github.com/bonjoski/airlock v0.11.0/go.mod h1:uBz2f8oyiL3xxbe+b5vfLB/C/UqbI36UcEBUgciKtzw=
+github.com/bonjoski/shield v0.2.1 h1:+lqk/VasZY//NEitHLksaKj+7HVrCRc3xHIGU/ItMlw=
+github.com/bonjoski/shield v0.2.1/go.mod h1:tEaEPPXvMELlH/4Xopenj+JUfqsBTzaDGW2MfN2Oa2s=
 golang.org/x/sys v0.50.0 h1:dkKZEFTEKaLr1sjhs0WiKqoi8Jj5nHbS3Njmx1UoMJs=
 golang.org/x/sys v0.50.0/go.mod h1:hNLxWAXmnKAxqDtdwIYC4bM9oQPEecfsnNMuSxOs3og=
 golang.org/x/term v0.48.0 h1:G6UU1eiSB8nl3DzeUGt7Mg+2SctI8tPS6Z5/mBt6cOk=
