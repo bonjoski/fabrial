@@ -524,3 +524,69 @@ func TestAdversarial_FAB08_RouterExecuteEightSubagentsQueued(t *testing.T) {
 	}
 }
 
+// TestAdversarial_ArchiveZipSlipEscalation verifies that archive extraction commands
+// carrying traversal tokens, absolute extraction directories, or unsafe flags (GHSA-qh76-45cr-8xrc)
+// escalate dynamically to Tier 2 hardware isolation even when disguised via paths, casing, or env wrappers.
+func TestAdversarial_ArchiveZipSlipEscalation(t *testing.T) {
+	opts := &ExecutionOptions{Quiet: true, DryRun: true}
+
+	maliciousCases := []struct {
+		name string
+		cmd  []string
+	}{
+		{"SevenZRelativeEscape", []string{"7z", "x", "payload.7z", "-o../../etc"}},
+		{"SevenZZAbsoluteDest", []string{"/usr/bin/7zz", "x", "payload.7z", "-o/tmp/escape"}},
+		{"SevenZWindowsBackslash", []string{"7za", "x", `..\..\evil.7z`}},
+		{"TarAbsoluteNames", []string{"tar", "-P", "-xf", "archive.tar"}},
+		{"TarLongAbsoluteNames", []string{"TAR", "--absolute-names", "-xf", "archive.tar"}},
+		{"TarKeepDirSymlink", []string{"bsdtar", "--keep-directory-symlink", "-xf", "archive.tar"}},
+		{"TarOutOfWorkspaceC", []string{"tar", "-xf", "archive.tar", "-C", "/etc"}},
+		{"TarEnvWrappedEscape", []string{"env", "tar", "-xf", "archive.tar", "--directory=../../outside"}},
+		{"UnzipEncodedTraversal", []string{"unzip", "evil.zip", "-d", "%2e%2e/escape"}},
+		{"UnzipAbsoluteD", []string{"unzip", "evil.zip", "-d", "/var/tmp/pwn"}},
+		{"SevenZSymlinkPreserveFlag", []string{"7z", "x", "-snl", "archive.7z"}},
+	}
+
+	for _, tc := range maliciousCases {
+		t.Run(tc.name, func(t *testing.T) {
+			dec, err := Route(opts, tc.cmd)
+			if err != nil {
+				t.Fatalf("Route error on %v: %v", tc.cmd, err)
+			}
+			if dec.Tier != policy.Tier2 {
+				t.Errorf("FAIL-OPEN (GHSA-qh76-45cr-8xrc): %v routed to %v instead of Tier 2 (reason: %s)", tc.cmd, dec.Tier, dec.Reason)
+			}
+			if !strings.Contains(dec.Reason, "Zip-Slip") && !strings.Contains(dec.Reason, "dynamic tier escalation") {
+				t.Errorf("expected Zip-Slip / dynamic tier escalation rationale, got: %s", dec.Reason)
+			}
+		})
+	}
+
+	// Airgap invariant must still keep Tier 1 kernel offline confinement
+	airgapOpts := &ExecutionOptions{Airgap: true, Quiet: true, DryRun: true}
+	dec, err := Route(airgapOpts, []string{"7z", "x", "payload.7z", "-o../../escape"})
+	if err != nil {
+		t.Fatalf("Route airgap error: %v", err)
+	}
+	if dec.Tier != policy.Tier1 {
+		t.Errorf("expected --airgap to preserve Tier 1 kernel confinement, got %v", dec.Tier)
+	}
+
+	// Benign workspace-confined archive operations must remain Tier 1 (zero false positives)
+	benignCases := [][]string{
+		{"tar", "-tzf", "release.tar.gz"},
+		{"tar", "-xzf", "release.tar.gz", "-C", "./out"},
+		{"7z", "l", "archive.7z"},
+		{"7zz", "x", "archive.7z", "-odist/out"},
+		{"unzip", "-d", "dist/unpack", "artifact.zip"},
+	}
+	for _, cmd := range benignCases {
+		dec, err := Route(opts, cmd)
+		if err != nil {
+			t.Fatalf("Route benign error on %v: %v", cmd, err)
+		}
+		if dec.Tier != policy.Tier1 {
+			t.Errorf("FALSE POSITIVE: benign archive command %v escalated to %v (reason: %s)", cmd, dec.Tier, dec.Reason)
+		}
+	}
+}

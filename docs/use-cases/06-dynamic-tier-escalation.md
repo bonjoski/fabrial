@@ -78,6 +78,19 @@ fabrial run -- git log --grep "$(python3 -c 'print("A" * 5000)')"
 [fabrial] Routed to Tier 2 (Aegisbox MicroVM) for hardware isolation
 ```
 
+### Step 4: Automatic Escalation on Archive Zip-Slip Hazards (`GHSA-qh76-45cr-8xrc`)
+Archive extraction commands (`7z`, `7zz`, `tar`, `unzip`, `bsdtar`, `cpio`) carrying traversal segments (`../`, `..\`, `%2e%2e`), absolute extraction destinations (`-o/etc`, `-C /tmp`), or unsafe path/symlink flags (`-P`, `--absolute-names`, `--keep-directory-symlink`) automatically escalate to Tier 2 hardware isolation (while Airlock enforces workspace path confinement in Tier 1):
+
+```bash
+fabrial run -- 7zz x payload.7z -o../../outside
+```
+
+**Output:**
+```text
+[fabrial] ⚠️ Dynamic Tier Escalation: archive path traversal segment detected in 7zz argument "-o../../outside" (Zip-Slip defense)
+[fabrial] Routed to Tier 2 (Aegisbox MicroVM) for hardware isolation
+```
+
 ---
 
 ## 5. Invariants & Guarantees

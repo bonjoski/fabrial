@@ -25,9 +25,9 @@ import (
 )
 
 var (
-	tier2QueueMu   sync.Mutex
-	tier2Queues    = make(map[string]*queue.MicroVMQueue)
-	tier2ReqSeq    atomic.Uint64
+	tier2QueueMu sync.Mutex
+	tier2Queues  = make(map[string]*queue.MicroVMQueue)
+	tier2ReqSeq  atomic.Uint64
 )
 
 func getTier2ExecutionQueue() *queue.MicroVMQueue {
@@ -79,8 +79,8 @@ type Decision struct {
 	InjectedEnv []string
 	Reason      string
 	Command     []string
-	Options    *ExecutionOptions
-	PolicyFile string
+	Options     *ExecutionOptions
+	PolicyFile  string
 }
 
 // ParseArgs parses command line arguments into ExecutionOptions and command arguments.
@@ -287,10 +287,90 @@ var (
 	reSubshellChaining = regexp.MustCompile(`(?i)(\$\(.*\)|` + "`.*`" + `|;\s*(curl|wget|bash|sh|nc|python|perl|eval|exec)|\|\|\s*(curl|wget|bash|sh)|&&\s*(curl|wget|bash|sh|nc))`)
 	reFuzzingAnomalies = regexp.MustCompile(`(?i)(%[0-9a-f]{2}){8,}|(\x00|\x1b)|(\.\./){4,}|/proc/self/(mem|environ)`)
 	reInlineEvalNet    = regexp.MustCompile(`(?i)(-c|-e|\beval\b).*(\bsocket\b|\bnet\b|\bhttp\b|\burllib\b|requests|fetch|tls|miren)`)
+	reZipSlipTraversal = regexp.MustCompile(`(?i)((^|[/\\])\.\.([/\\]|$)|%2e%2e|%2e\.|\.%2e)`)
 )
 
+var archiveExtractionTools = map[string]bool{
+	"7z":           true,
+	"7za":          true,
+	"7zz":          true,
+	"7zr":          true,
+	"sevenz":       true,
+	"sevenz-rust":  true,
+	"sevenz-rust2": true,
+	"tar":          true,
+	"gtar":         true,
+	"bsdtar":       true,
+	"unzip":        true,
+	"unrar":        true,
+	"rar":          true,
+	"cpio":         true,
+	"pax":          true,
+}
+
+func detectArchiveTraversalHazard(cmdArgs []string) (bool, string) {
+	if len(cmdArgs) == 0 {
+		return false, ""
+	}
+
+	candidates, exceeded := policy.UnwrapCommands(cmdArgs)
+	if exceeded {
+		return true, "deeply nested wrapper chain around command invocation"
+	}
+
+	for _, cand := range candidates {
+		canon := policy.CanonicalizeCommand(cand)
+		if len(canon) == 0 {
+			continue
+		}
+		tool := strings.ToLower(policy.NormalizeBinaryName(canon[0]))
+		if !archiveExtractionTools[tool] {
+			continue
+		}
+
+		args := canon[1:]
+		for i := 0; i < len(args); i++ {
+			arg := args[i]
+			lower := strings.ToLower(arg)
+
+			// 1. Unsafe archive extraction flags allowing absolute paths or symlink escapes (Zip-Slip / GHSA-qh76-45cr-8xrc)
+			if arg == "-P" || lower == "--absolute-names" ||
+				lower == "--keep-directory-symlink" || lower == "--dereference" ||
+				lower == "-spe" || lower == "-snl" || lower == "-snh" {
+				return true, fmt.Sprintf("unsafe archive extraction flag %q on %s (Zip-Slip defense)", arg, tool)
+			}
+
+			// 2. Direct path traversal or encoded traversal segments anywhere in archive invocation
+			if reZipSlipTraversal.MatchString(arg) {
+				return true, fmt.Sprintf("archive path traversal segment detected in %s argument %q (Zip-Slip defense)", tool, arg)
+			}
+
+			// 3. Absolute extraction destination targets (-o/..., -C /..., --directory=/..., -d /...)
+			var destTarget string
+			switch {
+			case strings.HasPrefix(lower, "-o") && len(arg) > 2 && strings.HasPrefix(tool, "7z"):
+				destTarget = arg[2:]
+			case strings.HasPrefix(lower, "--directory="):
+				destTarget = arg[len("--directory="):]
+			case (arg == "-C" || arg == "--directory" || arg == "-d") && i+1 < len(args):
+				destTarget = args[i+1]
+			}
+
+			if destTarget != "" {
+				if strings.HasPrefix(destTarget, "/") || strings.HasPrefix(destTarget, "\\") ||
+					(len(destTarget) >= 2 && destTarget[1] == ':') || reZipSlipTraversal.MatchString(destTarget) {
+					return true, fmt.Sprintf("out-of-workspace archive extraction target %q on %s (Zip-Slip defense)", destTarget, tool)
+				}
+			}
+		}
+	}
+
+	return false, ""
+}
+
 // DetectAmbiguousParameters inspects command arguments for subshell injection,
-// differential fuzzing payloads, or inline network/eval execution that warrant Tier 2 hardware isolation.
+// differential fuzzing payloads, archive Zip-Slip hazards, or inline network/eval execution
+// that warrant Tier 2 hardware isolation.
 func DetectAmbiguousParameters(cmdArgs []string) (bool, string) {
 	if len(cmdArgs) == 0 {
 		return false, ""
@@ -309,6 +389,10 @@ func DetectAmbiguousParameters(cmdArgs []string) (bool, string) {
 
 	if totalLen > 4096 {
 		return true, fmt.Sprintf("argument vector size (%d bytes) exceeds Tier 1 fast-path threshold (>4096)", totalLen)
+	}
+
+	if isArchiveHazard, reason := detectArchiveTraversalHazard(cmdArgs); isArchiveHazard {
+		return true, reason
 	}
 
 	fullCmd := strings.Join(cmdArgs, " ")
