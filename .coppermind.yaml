@@ -1,0 +1,7 @@
+scope: bonjoski/fabrial
+paths:
+  pkg/router: bonjoski/fabrial/router
+  pkg/session: bonjoski/fabrial/session
+  pkg/hooks: bonjoski/fabrial/hooks
+  pkg/receipt: bonjoski/fabrial/receipt
+  pkg/policy: bonjoski/fabrial/policy
