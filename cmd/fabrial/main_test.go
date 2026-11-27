@@ -415,3 +415,45 @@ func TestReadTextFrom(t *testing.T) {
 		t.Fatalf("expected output to contain prompt, got: %q", out.String())
 	}
 }
+
+func TestFabrial_DoctorAirgap(t *testing.T) {
+	t.Run("State1_AirgapJSON_NoOptionalLeak", func(t *testing.T) {
+		restore := pillars.SetDefaultLookup(pillars.LookupInPATH(t.TempDir()))
+		defer restore()
+
+		var stdout, stderr bytes.Buffer
+		code := runDoctor([]string{"--airgap", "--json"}, t.TempDir(), &stdout, &stderr)
+		if code != 0 {
+			t.Fatalf("State 1 airgap: expected exit 0, got %d (stderr: %s)", code, stderr.String())
+		}
+		var rep doctor.AirgapAuditReport
+		if err := json.Unmarshal(stdout.Bytes(), &rep); err != nil {
+			t.Fatalf("failed to parse airgap JSON: %v (raw: %s)", err, stdout.String())
+		}
+		if !rep.AllPassed || rep.EgressDetected {
+			t.Fatalf("expected passing airgap audit with zero egress, got %+v", rep)
+		}
+		if strings.Contains(stdout.String(), "halfshard") || strings.Contains(stdout.String(), "stormcage") {
+			t.Fatalf("State 1 airgap JSON leaked absent optional pillars:\n%s", stdout.String())
+		}
+	})
+
+	t.Run("State3_AirgapRequiredMissing_Exits126", func(t *testing.T) {
+		restore := pillars.SetDefaultLookup(pillars.LookupInPATH(t.TempDir()))
+		defer restore()
+
+		workDir := t.TempDir()
+		if err := os.WriteFile(filepath.Join(workDir, "fabrial.yaml"), []byte("version: \"1\"\nrequire_halfshard: true\n"), 0644); err != nil {
+			t.Fatalf("write fabrial.yaml: %v", err)
+		}
+
+		var stdout, stderr bytes.Buffer
+		code := runDoctor([]string{"--airgap", "--json"}, workDir, &stdout, &stderr)
+		if code != pillars.ExitCodeRequiredMissing {
+			t.Fatalf("FAIL-OPEN: expected exit 126 in State 3 airgap, got %d (stderr: %s)", code, stderr.String())
+		}
+		if !strings.Contains(stderr.String(), "require_halfshard") {
+			t.Fatalf("expected FixForwardError mentioning require_halfshard on stderr, got: %s", stderr.String())
+		}
+	})
+}

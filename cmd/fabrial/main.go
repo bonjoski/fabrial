@@ -148,7 +148,7 @@ Usage:
   fabrial queue [status]
   fabrial exec [flags] [--] <command> [args...]
   fabrial run [flags] [--] <command> [args...]
-  fabrial doctor [--json] [--fix]
+  fabrial doctor [--airgap] [--json] [--fix]
   fabrial fix [pillar] [--json]
   fabrial daemon [status|start|stop|restart]
   fabrial serve [--socket <path>] [--port <port>]
@@ -294,6 +294,7 @@ func runDoctor(args []string, defaultDir string, stdout, stderr io.Writer) int {
 	asJSON := false
 	showWhy := false
 	doFix := false
+	doAirgap := false
 	projectDir := defaultDir
 	if projectDir == "" {
 		projectDir = "."
@@ -307,6 +308,8 @@ func runDoctor(args []string, defaultDir string, stdout, stderr io.Writer) int {
 			showWhy = true
 		case "--fix", "fix":
 			doFix = true
+		case "--airgap", "-airgap":
+			doAirgap = true
 		case "--dir", "-d":
 			if i+1 < len(args) {
 				projectDir = args[i+1]
@@ -317,6 +320,32 @@ func runDoctor(args []string, defaultDir string, stdout, stderr io.Writer) int {
 
 	if doFix {
 		return runFix(args, projectDir, stdout, stderr)
+	}
+
+	if doAirgap {
+		report, err := doctor.RunAirgapAudit(context.Background(), doctor.AirgapAuditOptions{
+			ProjectDir: projectDir,
+		})
+		if report != nil {
+			if asJSON {
+				if data, jErr := doctor.FormatAirgapJSON(report); jErr == nil {
+					fmt.Fprintln(stdout, string(data))
+				}
+			} else {
+				fmt.Fprintln(stdout, doctor.FormatAirgapTable(report))
+			}
+		}
+		if err != nil {
+			if code, ok := renderFixForwardIfPresent(err, stderr, asJSON, showWhy); ok {
+				return code
+			}
+			fmt.Fprintf(stderr, "fabrial doctor --airgap: %v\n", err)
+			return 1
+		}
+		if report == nil || !report.AllPassed || report.EgressDetected {
+			return 1
+		}
+		return 0
 	}
 
 	inspector := doctor.NewInspector(1 * time.Second)
