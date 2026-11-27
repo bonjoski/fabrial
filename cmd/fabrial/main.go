@@ -122,6 +122,9 @@ func main() {
 	case "serve":
 		handleServe(args)
 
+	case "top":
+		handleTop(args)
+
 	default:
 		// Direct shorthand: if first arg is a flag or executable, run it
 		handleExec(os.Args[1:])
@@ -154,6 +157,7 @@ Usage:
   fabrial serve [--socket <path>] [--port <port>]
   fabrial integrate [superengineering] [path] [--global]
   fabrial trust [pillar <name>|list|remove <name>] [--json]
+  fabrial top [--snapshot] [--json] [--dir <path>]
   fabrial version
 
 Ambient Multi-Agent Session Management (Zero Hot-Path Hop Tax):
