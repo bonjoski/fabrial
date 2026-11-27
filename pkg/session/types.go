@@ -4,6 +4,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/bonjoski/fabrial/pkg/pillars"
 )
 
 // Standard error definitions for session management.
@@ -32,8 +34,11 @@ type SessionConfig struct {
 	MaxVMs             int           `json:"max_vms,omitempty"`
 	AllowedScopes      []string      `json:"allowed_scopes"`
 	BiometricPreflight bool          `json:"biometric_preflight"`
-	ShieldProxyAddr    string        `json:"shield_proxy_addr,omitempty"`
-	ShieldCACertPath   string        `json:"shield_ca_cert_path,omitempty"`
+	ShieldProxyAddr    string            `json:"shield_proxy_addr,omitempty"`
+	ShieldCACertPath   string            `json:"shield_ca_cert_path,omitempty"`
+	RequireShield      bool              `json:"require_shield,omitempty"`
+	RequireStormcage   bool              `json:"require_stormcage,omitempty"`
+	PillarResolver     *pillars.Resolver `json:"-"`
 }
 
 // SessionGrant represents an authenticated session lease with ambient security context.

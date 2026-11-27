@@ -2,23 +2,79 @@ package supervisor
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"testing"
+
+	"github.com/bonjoski/fabrial/pkg/pillars"
+	"github.com/bonjoski/fabrial/pkg/ux"
 )
 
+func createFakeDaemonBin(t *testing.T, dir, name string) {
+	t.Helper()
+	p := filepath.Join(dir, name)
+	if runtime.GOOS == "windows" {
+		p += ".exe"
+	}
+	if err := os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatalf("write fake binary %s: %v", name, err)
+	}
+}
+
 func TestSupervisor_DefaultServicesDefined(t *testing.T) {
-	sup := NewDefaultSupervisor()
-	if len(sup.Services) != 5 {
-		t.Fatalf("expected 5 default daemons, got %d", len(sup.Services))
+	// State 1: Neither Shield nor Stormcage installed & unrequired -> only 3 core daemons
+	emptyBin := t.TempDir()
+	supState1 := NewSupervisor(&pillars.Resolver{Lookup: pillars.LookupInPATH(emptyBin)}, pillars.Requirements{})
+	if len(supState1.Services) != 3 {
+		t.Fatalf("State 1: expected 3 core daemons, got %d", len(supState1.Services))
+	}
+	coreNames := []string{"Locksmith", "Argus", "Aegisbox"}
+	for i, name := range coreNames {
+		if supState1.Services[i].Name != name {
+			t.Errorf("State 1 at index %d: expected %s, got %s", i, name, supState1.Services[i].Name)
+		}
+	}
+	if _, ok := supState1.GetService("Shield"); ok {
+		t.Fatalf("State 1: Shield service must not be registered when absent & unrequired")
+	}
+	if _, ok := supState1.GetService("Stormcage"); ok {
+		t.Fatalf("State 1: Stormcage service must not be registered when absent & unrequired")
 	}
 
-	names := []string{"Locksmith", "Argus", "Aegisbox", "Shield", "Stormcage"}
-	for i, name := range names {
-		if sup.Services[i].Name != name {
-			t.Errorf("at index %d: expected %s, got %s", i, name, sup.Services[i].Name)
+	// State 2: Both Shield and Stormcage installed -> all 5 daemons registered
+	supState2 := NewSupervisor(&pillars.Resolver{
+		Lookup: pillars.StaticLookup(map[string]string{
+			"shield":    "/opt/homebrew/Cellar/shield/0.4.0/bin/shield",
+			"stormcage": "/opt/homebrew/Cellar/stormcage/0.4.0/bin/stormcage",
+		}),
+		DisableTrustStore: true,
+	}, pillars.Requirements{})
+	if len(supState2.Services) != 5 {
+		t.Fatalf("State 2: expected 5 daemons, got %d", len(supState2.Services))
+	}
+	allNames := []string{"Locksmith", "Argus", "Aegisbox", "Shield", "Stormcage"}
+	for i, name := range allNames {
+		if supState2.Services[i].Name != name {
+			t.Errorf("State 2 at index %d: expected %s, got %s", i, name, supState2.Services[i].Name)
 		}
+	}
+
+	// State 3: require_shield: true with missing binary -> Shield registered as Required and Start fails closed (exit 126)
+	supState3 := NewSupervisor(&pillars.Resolver{Lookup: pillars.LookupInPATH(emptyBin)}, pillars.Requirements{RequireShield: true})
+	def, ok := supState3.GetService("Shield")
+	if !ok || !def.Required {
+		t.Fatalf("State 3: expected Shield registered with Required=true, got ok=%v def=%+v", ok, def)
+	}
+	err := supState3.Start(context.Background(), "Shield")
+	if err == nil {
+		t.Fatal("FAIL-OPEN: expected Start(Shield) to fail closed in State 3")
+	}
+	var ffe *ux.FixForwardError
+	if !errors.As(err, &ffe) || ffe.ExitCode != pillars.ExitCodeRequiredMissing {
+		t.Fatalf("State 3: expected FixForwardError exit 126, got %v", err)
 	}
 }
 

@@ -158,6 +158,8 @@ type FabrialConfig struct {
 	MaxSubagentWorkers          int               `json:"max_subagent_workers"`
 	EscalateShellBuiltins       bool              `json:"escalate_shell_builtins"`
 	FailClosedOnError           bool              `json:"fail_closed_on_error"`
+	RequireShield               bool              `json:"require_shield,omitempty"`
+	RequireStormcage            bool              `json:"require_stormcage,omitempty"`
 }
 
 // ToolchainPolicies aggregates policies across all 10 bonjoski sovereign tools.

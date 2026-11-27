@@ -12,13 +12,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"github.com/bonjoski/airlock/pkg/bridge"
+	"github.com/bonjoski/fabrial/pkg/pillars"
 	"github.com/bonjoski/fabrial/pkg/policy"
 	"github.com/bonjoski/fabrial/pkg/procident"
 	"github.com/bonjoski/fabrial/pkg/queue"
@@ -65,9 +65,10 @@ type ExecutionOptions struct {
 	Quiet         bool
 	DryRun        bool
 	Dir           string
-	Stdin         io.Reader
-	Stdout        io.Writer
-	Stderr        io.Writer
+	Stdin          io.Reader
+	Stdout         io.Writer
+	Stderr         io.Writer
+	PillarResolver *pillars.Resolver
 }
 
 // Decision represents the dynamic routing choice made by the fabric router.
@@ -479,10 +480,29 @@ func Route(opts *ExecutionOptions, cmdArgs []string) (*Decision, error) {
 		}
 	}
 
+	// 3-State Optional Pillar enforcement (Shield & Stormcage).
+	// State 3 (explicitly required in fabrial.yaml but missing on PATH) MUST fail closed (exit 126).
+	pillarResolver := opts.PillarResolver
+	if pillarResolver == nil {
+		pillarResolver = pillars.DefaultResolver()
+	}
+	pillarReq := pillars.RequirementsFromPolicy(pol)
+	shieldRes := pillarResolver.ResolveShield(pillarReq)
+	if shieldRes.State == pillars.StateRequiredMissing {
+		return nil, shieldRes.Err
+	}
+	stormcageRes := pillarResolver.ResolveStormcage(pillarReq)
+	if stormcageRes.State == pillars.StateRequiredMissing {
+		return nil, stormcageRes.Err
+	}
+
 	// Shield in-flight secret wire guard environment injection
 	shieldCfg := pol.GetShieldConfig()
+	shieldExplicit := opts.Shield || pol.RequireShield || (pol.Shield != nil && pol.Shield.Enabled)
+	shieldActive := shieldRes.IsActive()
+	shieldEnvOverride := os.Getenv("SHIELD_PROXY_ADDR") != ""
 	var injectedEnv []string
-	if opts.Net || opts.Shield || (shieldCfg.Enabled && shieldCfg.AutoInjectEnv && opts.Net) {
+	if (shieldActive || shieldExplicit || shieldEnvOverride) && (opts.Net || opts.Shield || (shieldActive && shieldCfg.Enabled && shieldCfg.AutoInjectEnv && opts.Net)) {
 		if addr, ok := DetectShieldProxy(shieldCfg.ProxyAddr); ok {
 			injectedEnv = append(injectedEnv,
 				"HTTP_PROXY=http://"+addr,
@@ -491,7 +511,9 @@ func Route(opts *ExecutionOptions, cmdArgs []string) (*Decision, error) {
 				"https_proxy=http://"+addr,
 				"SOVEREIGN_SHIELD_ACTIVE=1",
 			)
-		} else if shieldCfg.FailClosed && (opts.Net || opts.Shield) {
+		} else if pol.RequireShield && (opts.Net || opts.Shield) {
+			return nil, pillars.NewRequiredUnhealthyError(pillars.Shield, "wire guard proxy offline (fail-closed)")
+		} else if (shieldExplicit || shieldActive) && shieldCfg.FailClosed && (opts.Net || opts.Shield) {
 			return nil, errors.New("Shield wire guard proxy offline and fail-closed is active; execution halted to prevent credential leakage")
 		}
 	}
@@ -645,70 +667,12 @@ func Execute(ctx context.Context, dec *Decision) (int, error) {
 	return 0, nil
 }
 
-// FindExecutable searches for a binary across trusted absolute PATH directories and standard
-// installation prefixes, refusing relative PATH entries (e.g. ".") and world-writable binaries.
+// FindExecutable searches for a binary across trusted Homebrew/system prefixes and absolute
+// PATH directories, enforcing Layer 1 (zero-execution Go debug/buildinfo provenance for all
+// bonjoski ecosystem binaries) and Layer 2 (regular executable, non-world-writable binary and
+// parent dir, UID ownership, canonical EvalSymlinks path).
 func FindExecutable(name string) (string, error) {
-	if name == "" || strings.ContainsRune(name, filepath.Separator) {
-		return "", fmt.Errorf("invalid executable lookup name %q", name)
-	}
-
-	checkCandidate := func(cand string) (string, bool) {
-		fi, err := os.Stat(cand)
-		if err != nil || fi.IsDir() {
-			return "", false
-		}
-		if runtime.GOOS != "windows" {
-			if fi.Mode()&0111 == 0 {
-				return "", false
-			}
-			// Reject world-writable executables to defeat untrusted drop-in hijacking
-			if fi.Mode().Perm()&0002 != 0 {
-				return "", false
-			}
-		}
-		return cand, true
-	}
-
-	exts := []string{""}
-	if runtime.GOOS == "windows" {
-		exts = []string{".exe", ".bat", ".cmd", ""}
-	}
-
-	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
-		if dir == "" || !filepath.IsAbs(dir) {
-			continue
-		}
-		for _, ext := range exts {
-			if p, ok := checkCandidate(filepath.Join(dir, name+ext)); ok {
-				return p, nil
-			}
-		}
-	}
-
-	home, _ := os.UserHomeDir()
-	candidates := []string{
-		filepath.Join("/opt/homebrew/bin", name),
-		filepath.Join("/usr/local/bin", name),
-		filepath.Join("/usr/bin", name),
-		filepath.Join("/bin", name),
-	}
-	if home != "" {
-		candidates = append(candidates,
-			filepath.Join(home, ".local", "bin", name),
-			filepath.Join(home, "bin", name),
-			filepath.Join(home, "go", "bin", name),
-		)
-	}
-
-	for _, c := range candidates {
-		for _, ext := range exts {
-			if p, ok := checkCandidate(c + ext); ok {
-				return p, nil
-			}
-		}
-	}
-
-	return "", fmt.Errorf("%s binary not found on trusted PATH or standard install directories", name)
+	return pillars.LookupExecutable(name)
 }
 
 // ResolveAegisboxSocketPath returns the path to the Aegisbox daemon Unix domain socket.

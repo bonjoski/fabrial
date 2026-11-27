@@ -7,6 +7,9 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/bonjoski/fabrial/pkg/pillars"
+	"github.com/bonjoski/fabrial/pkg/router"
 )
 
 var validEnvKeyRegex = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
@@ -61,6 +64,38 @@ func BuildEnvironmentWithWorkspace(sessionID SessionID, parentID SessionID, toke
 	}
 
 	return env
+}
+
+// ResolveSessionProxyAddr applies the 3-State optional pillar discovery contract for Shield
+// (and enforces any required Stormcage pillar) when determining the ambient session HTTP_PROXY:
+//   - State 3 (required pillar missing): returns a fail-closed *ux.FixForwardError (exit 126).
+//   - State 2 (shield installed on PATH): returns explicitAddr if provided, else active proxy addr or 127.0.0.1:8443.
+//   - State 1 (shield absent & unrequired): returns explicitAddr only if explicitly set by flag, else "" (no dead proxy).
+func ResolveSessionProxyAddr(explicitAddr string, explicitSet bool, resolver *pillars.Resolver, req pillars.Requirements) (string, error) {
+	if resolver == nil {
+		resolver = pillars.DefaultResolver()
+	}
+	if err := resolver.EnforceRequired(req); err != nil {
+		return "", err
+	}
+	shieldRes := resolver.ResolveShield(req)
+	if shieldRes.IsActive() {
+		if explicitSet && strings.TrimSpace(explicitAddr) != "" {
+			return strings.TrimSpace(explicitAddr), nil
+		}
+		if addr, ok := router.DetectShieldProxy(); ok {
+			return addr, nil
+		}
+		if strings.TrimSpace(explicitAddr) != "" {
+			return strings.TrimSpace(explicitAddr), nil
+		}
+		return "127.0.0.1:8443", nil
+	}
+	// State 1 (StateAbsent): never inject a dead default proxy pointing to a non-existent Shield daemon.
+	if explicitSet {
+		return strings.TrimSpace(explicitAddr), nil
+	}
+	return "", nil
 }
 
 func isSafeReceiptPathSegment(seg string) bool {

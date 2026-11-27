@@ -14,7 +14,9 @@ import (
 	"time"
 
 	airlockDoc "github.com/bonjoski/airlock/pkg/doctor"
+	"github.com/bonjoski/fabrial/pkg/pillars"
 	"github.com/bonjoski/fabrial/pkg/router"
+	"github.com/bonjoski/fabrial/pkg/ux"
 )
 
 // PillarID identifies an ecosystem security component.
@@ -40,6 +42,7 @@ const (
 	StatusOnline   Status = "ONLINE"
 	StatusDegraded Status = "DEGRADED"
 	StatusOffline  Status = "OFFLINE"
+	StatusOptional Status = "OPTIONAL"
 )
 
 // PillarHealth represents the diagnostic report for a single ecosystem component.
@@ -51,9 +54,10 @@ type PillarHealth struct {
 	BinaryPath string        `json:"binary_path,omitempty"`
 	SocketPath string        `json:"socket_path,omitempty"`
 	Latency    time.Duration `json:"latency_ns,omitempty"`
+	Required   bool          `json:"required,omitempty"`
 }
 
-// CanonicalOrder defines the authoritative presentation order for the 9 security and supply-chain tools.
+// CanonicalOrder defines the authoritative presentation order for all security and supply-chain tools.
 var CanonicalOrder = []PillarID{
 	PillarAirlock,
 	PillarLocksmith,
@@ -66,9 +70,40 @@ var CanonicalOrder = []PillarID{
 	PillarBomhound,
 }
 
-// Inspector probes the health of all sovereign security tools.
+// CoreCanonicalOrder defines the 7 always-active public security pillars (excluding optional private pillars).
+var CoreCanonicalOrder = []PillarID{
+	PillarAirlock,
+	PillarLocksmith,
+	PillarAegisbox,
+	PillarArgus,
+	PillarConjoiner,
+	PillarSoulcaster,
+	PillarBomhound,
+}
+
+// Inspector probes the health of all active sovereign security tools.
 type Inspector struct {
-	Timeout time.Duration
+	Timeout      time.Duration
+	Resolver     *pillars.Resolver
+	Requirements *pillars.Requirements
+}
+
+func (in *Inspector) resolver() *pillars.Resolver {
+	if in != nil && in.Resolver != nil {
+		return in.Resolver
+	}
+	return pillars.DefaultResolver()
+}
+
+func (in *Inspector) resolveRequirements(projectDir string) pillars.Requirements {
+	if in != nil && in.Requirements != nil {
+		return *in.Requirements
+	}
+	req, err := pillars.LoadRequirements("", projectDir)
+	if err != nil {
+		return pillars.Requirements{}
+	}
+	return req
 }
 
 // NewInspector creates an Inspector with the specified timeout.
@@ -79,22 +114,42 @@ func NewInspector(timeout time.Duration) *Inspector {
 	return &Inspector{Timeout: timeout}
 }
 
-// InspectAll concurrently probes all 10 pillars and returns reports in canonical order.
+// InspectAll concurrently probes all active pillars and returns reports in canonical order.
+// Optional private pillars (Shield, Stormcage) follow the 3-State discovery contract:
+//   - State 1 (absent & unrequired): omitted completely so public users see zero noise or score degradation.
+//   - State 2 (installed on PATH): auto-discovered and probed normally.
+//   - State 3 (missing but explicitly required in fabrial.yaml): included as OFFLINE with Required=true.
 func (in *Inspector) InspectAll(ctx context.Context, projectDir string) []PillarHealth {
 	var mu sync.Mutex
 	resultsMap := make(map[PillarID]PillarHealth)
 	var wg sync.WaitGroup
+
+	req := in.resolveRequirements(projectDir)
+	res := in.resolver()
+	shieldRes := res.ResolveShield(req)
+	stormcageRes := res.ResolveStormcage(req)
 
 	probers := map[PillarID]func(context.Context, string) PillarHealth{
 		PillarAirlock:    in.probeAirlock,
 		PillarLocksmith:  in.probeLocksmith,
 		PillarAegisbox:   in.probeAegisbox,
 		PillarArgus:      in.probeArgus,
-		PillarShield:     in.probeShield,
 		PillarConjoiner:  in.probeConjoiner,
-		PillarStormcage:  in.probeStormcage,
 		PillarSoulcaster: in.probeSoulcaster,
 		PillarBomhound:   in.probeBomhound,
+	}
+
+	if shieldRes.IsVisible() {
+		sr := shieldRes
+		probers[PillarShield] = func(pCtx context.Context, _ string) PillarHealth {
+			return in.probeShieldWithResolution(pCtx, sr)
+		}
+	}
+	if stormcageRes.IsVisible() {
+		sc := stormcageRes
+		probers[PillarStormcage] = func(pCtx context.Context, _ string) PillarHealth {
+			return in.probeStormcageWithResolution(pCtx, sc)
+		}
 	}
 
 	for pid, probeFunc := range probers {
@@ -105,26 +160,58 @@ func (in *Inspector) InspectAll(ctx context.Context, projectDir string) []Pillar
 			defer cancel()
 
 			start := time.Now()
-			res := fn(pCtx, projectDir)
-			res.Latency = time.Since(start)
+			r := fn(pCtx, projectDir)
+			r.Latency = time.Since(start)
 
 			mu.Lock()
-			resultsMap[pID] = res
+			resultsMap[pID] = r
 			mu.Unlock()
 		}(pid, probeFunc)
 	}
 
 	wg.Wait()
 
-	// Assemble canonical ordered slice
-	ordered := make([]PillarHealth, 0, len(CanonicalOrder))
+	// Assemble canonical ordered slice (only visible pillars)
+	ordered := make([]PillarHealth, 0, len(probers))
 	for _, pid := range CanonicalOrder {
-		if res, ok := resultsMap[pid]; ok {
-			ordered = append(ordered, res)
+		if r, ok := resultsMap[pid]; ok {
+			ordered = append(ordered, r)
 		}
 	}
 
 	return ordered
+}
+
+// CheckRequiredHealth inspects diagnostic results and returns a calm UB-CLI-v2 FixForwardError
+// (exit 126) if any explicitly required optional pillar is missing or unhealthy.
+func CheckRequiredHealth(results []PillarHealth) *ux.FixForwardError {
+	for _, r := range results {
+		if !r.Required {
+			continue
+		}
+		if r.Status != StatusOffline && r.Status != StatusDegraded {
+			continue
+		}
+		opt, ok := pillars.IsOptionalPillar(string(r.Pillar))
+		if !ok {
+			continue
+		}
+		if r.BinaryPath == "" {
+			return pillars.NewRequiredMissingError(opt, r.Details)
+		}
+		return pillars.NewRequiredUnhealthyError(opt, r.Details)
+	}
+	return nil
+}
+
+// HasDegraded reports whether any reported pillar is OFFLINE or DEGRADED.
+func HasDegraded(results []PillarHealth) bool {
+	for _, r := range results {
+		if r.Status == StatusOffline || r.Status == StatusDegraded {
+			return true
+		}
+	}
+	return false
 }
 
 func (in *Inspector) probeAirlock(ctx context.Context, projectDir string) PillarHealth {
@@ -316,13 +403,23 @@ func (in *Inspector) probeArgus(ctx context.Context, _ string) PillarHealth {
 	}
 }
 
-func (in *Inspector) probeShield(ctx context.Context, _ string) PillarHealth {
-	bin, binErr := router.FindExecutable("shield")
+func (in *Inspector) probeShieldWithResolution(_ context.Context, res pillars.Resolution) PillarHealth {
+	if res.State == pillars.StateRequiredMissing {
+		return PillarHealth{
+			Pillar:   PillarShield,
+			Role:     "Secret Redaction & Fail-Closed Wire Guard",
+			Status:   StatusOffline,
+			Details:  "REQUIRED by fabrial.yaml (require_shield: true), but shield binary not found on PATH",
+			Required: true,
+		}
+	}
+
+	bin := res.BinaryPath
 	proxyAddr, proxyOnline := router.DetectShieldProxy()
 
 	if proxyOnline {
 		details := fmt.Sprintf("Wire guard proxy active on %s", proxyAddr)
-		if binErr == nil {
+		if bin != "" {
 			details = fmt.Sprintf("Wire guard proxy active on %s (binary at %s)", proxyAddr, bin)
 		}
 		return PillarHealth{
@@ -331,24 +428,27 @@ func (in *Inspector) probeShield(ctx context.Context, _ string) PillarHealth {
 			Status:     StatusOnline,
 			Details:    details,
 			BinaryPath: bin,
+			Required:   res.Required,
 		}
 	}
 
-	if binErr == nil {
+	if bin != "" {
 		return PillarHealth{
 			Pillar:     PillarShield,
 			Role:       "Secret Redaction & Fail-Closed Wire Guard",
 			Status:     StatusDegraded,
 			Details:    fmt.Sprintf("Available at %s (proxy offline; run 'fabrial daemon start' or 'shield proxy')", bin),
 			BinaryPath: bin,
+			Required:   res.Required,
 		}
 	}
 
 	return PillarHealth{
-		Pillar:  PillarShield,
-		Role:    "Secret Redaction & Fail-Closed Wire Guard",
-		Status:  StatusOffline,
-		Details: "shield binary not found on PATH",
+		Pillar:   PillarShield,
+		Role:     "Secret Redaction & Fail-Closed Wire Guard",
+		Status:   StatusOffline,
+		Details:  "shield binary not found on PATH",
+		Required: res.Required,
 	}
 }
 
@@ -402,15 +502,25 @@ func (in *Inspector) probeConjoiner(ctx context.Context, _ string) PillarHealth 
 	}
 }
 
-func (in *Inspector) probeStormcage(ctx context.Context, _ string) PillarHealth {
-	bin, binErr := router.FindExecutable("stormcage")
+func (in *Inspector) probeStormcageWithResolution(ctx context.Context, res pillars.Resolution) PillarHealth {
+	if res.State == pillars.StateRequiredMissing {
+		return PillarHealth{
+			Pillar:   PillarStormcage,
+			Role:     "Context & Memory Prompt Firewall",
+			Status:   StatusOffline,
+			Details:  "REQUIRED by fabrial.yaml (require_stormcage: true), but stormcage binary not found on PATH",
+			Required: true,
+		}
+	}
+
+	bin := res.BinaryPath
 
 	// Check if daemon is active on 127.0.0.1:8088
 	conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", "127.0.0.1:8088")
 	if err == nil {
 		_ = conn.Close()
 		details := "Context firewall daemon active on 127.0.0.1:8088"
-		if binErr == nil {
+		if bin != "" {
 			details = fmt.Sprintf("Context firewall daemon active on 127.0.0.1:8088 (binary at %s)", bin)
 		}
 		return PillarHealth{
@@ -419,24 +529,27 @@ func (in *Inspector) probeStormcage(ctx context.Context, _ string) PillarHealth 
 			Status:     StatusOnline,
 			Details:    details,
 			BinaryPath: bin,
+			Required:   res.Required,
 		}
 	}
 
-	if binErr == nil {
+	if bin != "" {
 		return PillarHealth{
 			Pillar:     PillarStormcage,
 			Role:       "Context & Memory Prompt Firewall",
 			Status:     StatusReady,
 			Details:    fmt.Sprintf("Available at %s (inline sanitizer & AST normalizer ready)", bin),
 			BinaryPath: bin,
+			Required:   res.Required,
 		}
 	}
 
 	return PillarHealth{
-		Pillar:  PillarStormcage,
-		Role:    "Context & Memory Prompt Firewall",
-		Status:  StatusOffline,
-		Details: "stormcage binary not found on PATH",
+		Pillar:   PillarStormcage,
+		Role:     "Context & Memory Prompt Firewall",
+		Status:   StatusOffline,
+		Details:  "stormcage binary not found on PATH",
+		Required: res.Required,
 	}
 }
 

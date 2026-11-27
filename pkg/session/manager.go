@@ -12,6 +12,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/bonjoski/fabrial/pkg/pillars"
 )
 
 var (
@@ -28,6 +30,7 @@ type SessionManager struct {
 	sessions          map[SessionID]*SessionGrant
 	childrenByParent  map[SessionID][]SessionID
 	biometricVerifier BiometricVerifier
+	pillarResolver    *pillars.Resolver
 	maxSessions       int
 	defaultMasterTTL  time.Duration
 	defaultChildTTL   time.Duration
@@ -40,6 +43,13 @@ type ManagerOption func(*SessionManager)
 func WithBiometricVerifier(v BiometricVerifier) ManagerOption {
 	return func(sm *SessionManager) {
 		sm.biometricVerifier = v
+	}
+}
+
+// WithPillarResolver injects a deterministic optional-pillar resolver for 3-state discovery.
+func WithPillarResolver(r *pillars.Resolver) ManagerOption {
+	return func(sm *SessionManager) {
+		sm.pillarResolver = r
 	}
 }
 
@@ -80,6 +90,23 @@ func (sm *SessionManager) activeCountLocked() int {
 
 // BeginSession initializes a master session with ambient environment and optional biometric pre-flight.
 func (sm *SessionManager) BeginSession(ctx context.Context, cfg SessionConfig) (*SessionGrant, error) {
+	// Enforce State 3 fail-closed requirements for optional pillars before allocating a session.
+	if cfg.RequireShield || cfg.RequireStormcage {
+		resolver := cfg.PillarResolver
+		if resolver == nil {
+			resolver = sm.pillarResolver
+		}
+		if resolver == nil {
+			resolver = pillars.DefaultResolver()
+		}
+		if err := resolver.EnforceRequired(pillars.Requirements{
+			RequireShield:    cfg.RequireShield,
+			RequireStormcage: cfg.RequireStormcage,
+		}); err != nil {
+			return nil, err
+		}
+	}
+
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 

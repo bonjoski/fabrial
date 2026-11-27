@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/bonjoski/airlock/pkg/secrets"
+	"github.com/bonjoski/fabrial/pkg/pillars"
 	"github.com/bonjoski/fabrial/pkg/router"
 )
 
@@ -176,6 +177,43 @@ func (f *Fixer) FixAll(ctx context.Context) ([]FixAction, []PillarHealth) {
 
 // FixPillar remediates a specific named pillar and returns the actions taken with updated health.
 func (f *Fixer) FixPillar(ctx context.Context, pillar PillarID) ([]FixAction, PillarHealth) {
+	if opt, isOpt := pillars.IsOptionalPillar(string(pillar)); isOpt {
+		req := f.inspector.resolveRequirements(f.projectDir)
+		res := f.inspector.resolver().Resolve(opt, req)
+		pid := optionalPillarID(opt)
+		role := optionalPillarRole(opt)
+		switch res.State {
+		case pillars.StateAbsent:
+			return []FixAction{
+					{
+						Pillar:      pid,
+						Description: fmt.Sprintf("Optional pillar %s is not installed and not required by policy; skipped", opt.DisplayName()),
+						Success:     true,
+					},
+				}, PillarHealth{
+					Pillar:  pid,
+					Role:    role,
+					Status:  StatusOptional,
+					Details: "Optional pillar not installed (not required by fabrial.yaml)",
+				}
+		case pillars.StateRequiredMissing:
+			return []FixAction{
+					{
+						Pillar:      pid,
+						Description: fmt.Sprintf("Required pillar %s binary missing on PATH (fail-closed)", opt.DisplayName()),
+						Success:     false,
+						Details:     res.Err.Error(),
+					},
+				}, PillarHealth{
+					Pillar:   pid,
+					Role:     role,
+					Status:   StatusOffline,
+					Required: true,
+					Details:  fmt.Sprintf("REQUIRED by fabrial.yaml (%s: true), but %s binary not found on PATH", opt.ConfigField(), string(opt)),
+				}
+		}
+	}
+
 	actions := f.fixPillarInternal(ctx, pillar)
 	updatedReports := f.inspector.InspectAll(ctx, f.projectDir)
 	for _, r := range updatedReports {
@@ -184,6 +222,28 @@ func (f *Fixer) FixPillar(ctx context.Context, pillar PillarID) ([]FixAction, Pi
 		}
 	}
 	return actions, PillarHealth{Pillar: pillar, Status: StatusOffline, Details: "Unknown pillar"}
+}
+
+func optionalPillarID(opt pillars.OptionalPillar) PillarID {
+	switch opt {
+	case pillars.Shield:
+		return PillarShield
+	case pillars.Stormcage:
+		return PillarStormcage
+	default:
+		return PillarID(opt.DisplayName())
+	}
+}
+
+func optionalPillarRole(opt pillars.OptionalPillar) string {
+	switch opt {
+	case pillars.Shield:
+		return "Secret Redaction & Fail-Closed Wire Guard"
+	case pillars.Stormcage:
+		return "Context & Memory Prompt Firewall"
+	default:
+		return "Optional Security Pillar"
+	}
 }
 
 func (f *Fixer) fixPillarInternal(ctx context.Context, pillar PillarID) []FixAction {
@@ -464,6 +524,21 @@ func (f *Fixer) fixArgus(ctx context.Context) []FixAction {
 
 func (f *Fixer) fixShield(ctx context.Context) []FixAction {
 	var actions []FixAction
+	req := f.inspector.resolveRequirements(f.projectDir)
+	res := f.inspector.resolver().ResolveShield(req)
+	if res.State == pillars.StateAbsent {
+		return actions
+	}
+	if res.State == pillars.StateRequiredMissing {
+		actions = append(actions, FixAction{
+			Pillar:      PillarShield,
+			Description: "Required pillar Shield binary missing on PATH (fail-closed)",
+			Success:     false,
+			Details:     res.Err.Error(),
+		})
+		return actions
+	}
+
 	home, _ := os.UserHomeDir()
 	if home != "" {
 		shieldDir := filepath.Join(home, ".shield")
@@ -484,7 +559,7 @@ func (f *Fixer) fixShield(ctx context.Context) []FixAction {
 		return actions
 	}
 
-	if _, findErr := router.FindExecutable("shield"); findErr == nil && f.daemonManager != nil {
+	if res.IsActive() && f.daemonManager != nil {
 		if startErr := f.daemonManager.Start(ctx, "Shield"); startErr == nil {
 			if f.waitForTCP(ctx, "127.0.0.1:8443", 3*time.Second) {
 				actions = append(actions, FixAction{
@@ -515,6 +590,21 @@ func (f *Fixer) fixShield(ctx context.Context) []FixAction {
 
 func (f *Fixer) fixStormcage(ctx context.Context) []FixAction {
 	var actions []FixAction
+	req := f.inspector.resolveRequirements(f.projectDir)
+	res := f.inspector.resolver().ResolveStormcage(req)
+	if res.State == pillars.StateAbsent {
+		return actions
+	}
+	if res.State == pillars.StateRequiredMissing {
+		actions = append(actions, FixAction{
+			Pillar:      PillarStormcage,
+			Description: "Required pillar Stormcage binary missing on PATH (fail-closed)",
+			Success:     false,
+			Details:     res.Err.Error(),
+		})
+		return actions
+	}
+
 	home, _ := os.UserHomeDir()
 	if home != "" {
 		scDir := filepath.Join(home, ".stormcage")
@@ -535,7 +625,7 @@ func (f *Fixer) fixStormcage(ctx context.Context) []FixAction {
 		return actions
 	}
 
-	if _, findErr := router.FindExecutable("stormcage"); findErr == nil && f.daemonManager != nil {
+	if res.IsActive() && f.daemonManager != nil {
 		if startErr := f.daemonManager.Start(ctx, "Stormcage"); startErr == nil {
 			if f.waitForTCP(ctx, "127.0.0.1:8088", 3*time.Second) {
 				actions = append(actions, FixAction{

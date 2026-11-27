@@ -10,6 +10,8 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+
+	"github.com/bonjoski/fabrial/pkg/pillars"
 )
 
 // SuperEngineeringConfig represents the .super.engineering/config.json schema.
@@ -90,8 +92,23 @@ func DefaultCommands() []CustomCommand {
 
 // SuperEngineering integrates the Bonjoski security fabric into the specified target directory.
 func SuperEngineering(targetDir string) (*Result, error) {
+	return SuperEngineeringWithResolver(targetDir, pillars.DefaultResolver())
+}
+
+// SuperEngineeringWithResolver integrates the Bonjoski security fabric into targetDir using
+// an injectable optional-pillar resolver for deterministic 3-State Shield discovery.
+func SuperEngineeringWithResolver(targetDir string, resolver *pillars.Resolver) (*Result, error) {
 	if targetDir == "" {
 		targetDir = "."
+	}
+	if resolver == nil {
+		resolver = pillars.DefaultResolver()
+	}
+
+	req, _ := pillars.LoadRequirements("", targetDir)
+	shieldRes := resolver.ResolveShield(req)
+	if shieldRes.State == pillars.StateRequiredMissing {
+		return nil, shieldRes.Err
 	}
 
 	configDir := filepath.Join(targetDir, ".super.engineering")
@@ -136,7 +153,8 @@ func SuperEngineering(targetDir string) (*Result, error) {
 	}
 	rawMap["setup"] = setupList
 
-	// 2. Ensure run targets has "shield"
+	// 2. Ensure run targets has "shield" ONLY when Shield is installed (State 2).
+	// In State 1 (not installed & not required), do not inject a dead "shield" run target.
 	var runList []map[string]interface{}
 	if existingRun, ok := rawMap["run"].([]interface{}); ok {
 		for _, item := range existingRun {
@@ -145,25 +163,29 @@ func SuperEngineering(targetDir string) (*Result, error) {
 			}
 		}
 	}
-	hasShield := false
-	for _, r := range runList {
-		if name, ok := r["name"].(string); ok && name == "shield" {
-			hasShield = true
-			break
+	if shieldRes.IsActive() {
+		hasShield := false
+		for _, r := range runList {
+			if name, ok := r["name"].(string); ok && name == "shield" {
+				hasShield = true
+				break
+			}
 		}
-	}
-	if !hasShield {
-		shieldRun := map[string]interface{}{
-			"name": "shield",
-			"commands": []interface{}{
-				"shield proxy --addr 127.0.0.1:8443 --tls",
-			},
-			"default": false,
+		if !hasShield {
+			shieldRun := map[string]interface{}{
+				"name": "shield",
+				"commands": []interface{}{
+					"shield proxy --addr 127.0.0.1:8443 --tls",
+				},
+				"default": false,
+			}
+			runList = append(runList, shieldRun)
+			result.RunAdded = append(result.RunAdded, "shield")
 		}
-		runList = append(runList, shieldRun)
-		result.RunAdded = append(result.RunAdded, "shield")
+		rawMap["run"] = runList
+	} else if len(runList) > 0 {
+		rawMap["run"] = runList
 	}
-	rawMap["run"] = runList
 
 	// 3. Ensure shared slash commands
 	var cmdList []map[string]interface{}
@@ -425,9 +447,16 @@ func SuperEngineeringGlobal() (*Result, error) {
 		result.SetupAdded = append(result.SetupAdded, "fabrial doctor (user fallback)")
 	}
 
-	runCmd := exec.Command(scPath, "project", "scripts", "set", "run", "shield", "shield proxy --addr 127.0.0.1:8443 --tls", "--scope", "user")
-	if err := runCmd.Run(); err == nil {
-		result.RunAdded = append(result.RunAdded, "shield (user fallback)")
+	req, _ := pillars.LoadRequirements("", ".")
+	shieldRes := pillars.DefaultResolver().ResolveShield(req)
+	if shieldRes.State == pillars.StateRequiredMissing {
+		return nil, shieldRes.Err
+	}
+	if shieldRes.IsActive() {
+		runCmd := exec.Command(scPath, "project", "scripts", "set", "run", "shield", "shield proxy --addr 127.0.0.1:8443 --tls", "--scope", "user")
+		if err := runCmd.Run(); err == nil {
+			result.RunAdded = append(result.RunAdded, "shield (user fallback)")
+		}
 	}
 
 	return result, nil

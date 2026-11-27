@@ -15,8 +15,10 @@ import (
 	"time"
 
 	"github.com/bonjoski/fabrial/pkg/doctor"
+	"github.com/bonjoski/fabrial/pkg/pillars"
 	"github.com/bonjoski/fabrial/pkg/procident"
 	"github.com/bonjoski/fabrial/pkg/router"
+	"github.com/bonjoski/fabrial/pkg/ux"
 )
 
 // ServiceState represents the operational condition of a daemon.
@@ -36,6 +38,7 @@ type ServiceStatus struct {
 	Target     string       `json:"target,omitempty"`
 	Message    string       `json:"message"`
 	BinaryPath string       `json:"binary_path,omitempty"`
+	Required   bool         `json:"required,omitempty"`
 }
 
 // ServiceDef defines the command and endpoints for a resident daemon.
@@ -48,6 +51,7 @@ type ServiceDef struct {
 	LogFile     string
 	SocketPath  string
 	TCPAddr     string
+	Required    bool
 	HealthProbe func(ctx context.Context) bool
 }
 
@@ -102,6 +106,7 @@ func (osExecEngine) RunCommand(bin string, args []string) error {
 type Supervisor struct {
 	Services []ServiceDef
 	Engine   Engine
+	Resolver *pillars.Resolver
 }
 
 func (s *Supervisor) engine() Engine {
@@ -111,8 +116,39 @@ func (s *Supervisor) engine() Engine {
 	return osExecEngine{}
 }
 
-// NewDefaultSupervisor returns a Supervisor pre-configured with all sovereign fabric daemons.
+func (s *Supervisor) lookupBinary(name string) (string, error) {
+	if _, isOpt := pillars.IsOptionalPillar(name); isOpt {
+		res := s.Resolver
+		if res == nil {
+			res = pillars.DefaultResolver()
+		}
+		if res.Lookup != nil {
+			return res.Lookup(name)
+		}
+		return pillars.LookupExecutable(name)
+	}
+	return router.FindExecutable(name)
+}
+
+// NewDefaultSupervisor returns a Supervisor pre-configured with all active sovereign fabric daemons,
+// honoring 3-state optional pillar discovery for Shield and Stormcage from the current directory's fabrial.yaml.
 func NewDefaultSupervisor() *Supervisor {
+	return NewSupervisorForDir(".")
+}
+
+// NewSupervisorForDir returns a Supervisor with 3-state optional pillar discovery grounded in dir's fabrial.yaml.
+func NewSupervisorForDir(dir string) *Supervisor {
+	req, _ := pillars.LoadRequirements("", dir)
+	return NewSupervisor(pillars.DefaultResolver(), req)
+}
+
+// NewSupervisor builds a Supervisor with an injectable pillar resolver and explicit policy requirements.
+// Optional private daemons (Shield, Stormcage) are omitted in State 1 (absent & unrequired),
+// auto-included in State 2 (installed on PATH), and included with Required=true in State 3 (missing & required).
+func NewSupervisor(resolver *pillars.Resolver, req pillars.Requirements) *Supervisor {
+	if resolver == nil {
+		resolver = pillars.DefaultResolver()
+	}
 	home, _ := os.UserHomeDir()
 
 	services := []ServiceDef{
@@ -167,25 +203,33 @@ func NewDefaultSupervisor() *Supervisor {
 				return false
 			},
 		},
-		{
+	}
+
+	if shieldRes := resolver.ResolveShield(req); shieldRes.IsVisible() {
+		services = append(services, ServiceDef{
 			Name:       "Shield",
 			BinaryName: "shield",
 			StartArgs:  []string{"proxy", "--addr", "127.0.0.1:8443", "--tls"},
 			PIDFile:    filepath.Join(home, ".shield", "shield.pid"),
 			LogFile:    filepath.Join(home, ".shield", "proxy.log"),
 			TCPAddr:    "127.0.0.1:8443",
+			Required:   shieldRes.Required,
 			HealthProbe: func(_ context.Context) bool {
 				_, ok := router.DetectShieldProxy()
 				return ok
 			},
-		},
-		{
+		})
+	}
+
+	if stormcageRes := resolver.ResolveStormcage(req); stormcageRes.IsVisible() {
+		services = append(services, ServiceDef{
 			Name:       "Stormcage",
 			BinaryName: "stormcage",
 			StartArgs:  []string{"daemon", "--port", "8088"},
 			PIDFile:    filepath.Join(home, ".stormcage", "stormcage.pid"),
 			LogFile:    filepath.Join(home, ".stormcage", "daemon.log"),
 			TCPAddr:    "127.0.0.1:8088",
+			Required:   stormcageRes.Required,
 			HealthProbe: func(ctx context.Context) bool {
 				conn, err := (&net.Dialer{}).DialContext(ctx, "tcp", "127.0.0.1:8088")
 				if err == nil {
@@ -194,13 +238,38 @@ func NewDefaultSupervisor() *Supervisor {
 				}
 				return false
 			},
-		},
+		})
 	}
 
 	return &Supervisor{
 		Services: services,
 		Engine:   osExecEngine{},
+		Resolver: resolver,
 	}
+}
+
+// CheckRequiredStatuses returns a calm UB-CLI-v2 FixForwardError (exit 126) if any
+// explicitly required optional daemon is in StateError or missing its binary.
+func (s *Supervisor) CheckRequiredStatuses(statuses []ServiceStatus) *ux.FixForwardError {
+	for _, st := range statuses {
+		if !st.Required {
+			continue
+		}
+		opt, ok := pillars.IsOptionalPillar(st.Name)
+		if !ok {
+			continue
+		}
+		if st.State == StateError {
+			if st.BinaryPath == "" {
+				return pillars.NewRequiredMissingError(opt, st.Message)
+			}
+			return pillars.NewRequiredUnhealthyError(opt, st.Message)
+		}
+		if _, err := s.lookupBinary(string(opt)); err != nil {
+			return pillars.NewRequiredMissingError(opt, "")
+		}
+	}
+	return nil
 }
 
 // GetService returns the service definition matching name (case-insensitive).
@@ -250,6 +319,20 @@ func (s *Supervisor) StartService(ctx context.Context, def ServiceDef) ServiceSt
 		target = def.TCPAddr
 	}
 
+	// 0. If this daemon is explicitly required by policy, verify its trusted binary exists BEFORE
+	// trusting any pre-existing port/socket listener (defeats port-squatting when binary was deleted).
+	if def.Required {
+		if _, binErr := s.lookupBinary(def.BinaryName); binErr != nil {
+			return ServiceStatus{
+				Name:     def.Name,
+				State:    StateError,
+				Target:   target,
+				Required: true,
+				Message:  fmt.Sprintf("REQUIRED %s binary not found on PATH (fail-closed)", def.BinaryName),
+			}
+		}
+	}
+
 	// 1. Check if already online
 	if def.HealthProbe != nil && def.HealthProbe(ctx) {
 		pid, _, _ := readPIDRecord(def.PIDFile)
@@ -263,7 +346,7 @@ func (s *Supervisor) StartService(ctx context.Context, def ServiceDef) ServiceSt
 	}
 
 	// 2. Discover binary
-	bin, err := router.FindExecutable(def.BinaryName)
+	bin, err := s.lookupBinary(def.BinaryName)
 	if def.Name == "Aegisbox" {
 		// Prefer launching resident aegisboxd directly with --allow-degraded-local fallback if available
 		if aegisboxdBin, dErr := router.FindExecutable("aegisboxd"); dErr == nil {
@@ -277,10 +360,11 @@ func (s *Supervisor) StartService(ctx context.Context, def ServiceDef) ServiceSt
 	}
 	if err != nil {
 		return ServiceStatus{
-			Name:    def.Name,
-			State:   StateError,
-			Target:  target,
-			Message: fmt.Sprintf("%s binary not found on PATH or standard install dirs", def.BinaryName),
+			Name:     def.Name,
+			State:    StateError,
+			Target:   target,
+			Required: def.Required,
+			Message:  fmt.Sprintf("%s binary not found on PATH or standard install dirs", def.BinaryName),
 		}
 	}
 
@@ -470,29 +554,32 @@ func (s *Supervisor) QueryStatus(ctx context.Context, def ServiceDef) ServiceSta
 
 	if online {
 		return ServiceStatus{
-			Name:    def.Name,
-			State:   StateRunning,
-			PID:     pid,
-			Target:  target,
-			Message: "Online and responsive",
+			Name:     def.Name,
+			State:    StateRunning,
+			PID:      pid,
+			Target:   target,
+			Required: def.Required,
+			Message:  "Online and responsive",
 		}
 	}
 
 	if pid > 0 && isSameSupervisedProcess(pid, startNs) {
 		return ServiceStatus{
-			Name:    def.Name,
-			State:   StateRunning,
-			PID:     pid,
-			Target:  target,
-			Message: "Process alive but health endpoint unresponsive",
+			Name:     def.Name,
+			State:    StateRunning,
+			PID:      pid,
+			Target:   target,
+			Required: def.Required,
+			Message:  "Process alive but health endpoint unresponsive",
 		}
 	}
 
 	return ServiceStatus{
-		Name:    def.Name,
-		State:   StateStopped,
-		Target:  target,
-		Message: "Offline",
+		Name:     def.Name,
+		State:    StateStopped,
+		Target:   target,
+		Required: def.Required,
+		Message:  "Offline",
 	}
 }
 
@@ -567,6 +654,14 @@ func (s *Supervisor) Start(ctx context.Context, name string) error {
 	}
 	res := s.StartService(ctx, def)
 	if res.State == StateError {
+		if def.Required {
+			if opt, isOpt := pillars.IsOptionalPillar(def.BinaryName); isOpt {
+				if res.BinaryPath == "" {
+					return pillars.NewRequiredMissingError(opt, res.Message)
+				}
+				return pillars.NewRequiredUnhealthyError(opt, res.Message)
+			}
+		}
 		return fmt.Errorf("%s", res.Message)
 	}
 	return nil

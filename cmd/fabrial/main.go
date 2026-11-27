@@ -24,6 +24,7 @@ import (
 	"github.com/bonjoski/fabrial/pkg/doctor"
 	"github.com/bonjoski/fabrial/pkg/initscan"
 	"github.com/bonjoski/fabrial/pkg/integration"
+	"github.com/bonjoski/fabrial/pkg/pillars"
 	"github.com/bonjoski/fabrial/pkg/queue"
 	"github.com/bonjoski/fabrial/pkg/router"
 	"github.com/bonjoski/fabrial/pkg/server"
@@ -112,6 +113,9 @@ func main() {
 	case "integrate":
 		handleIntegrate(args)
 
+	case "trust":
+		handleTrust(args)
+
 	case "circuit-breaker", "breaker":
 		handleCircuitBreaker(args)
 
@@ -125,7 +129,12 @@ func main() {
 }
 
 func printUsage() {
-	fmt.Println(`💎 Fabrial — The Sovereign AI Agent Security Fabric
+	req, _ := pillars.LoadRequirements("", ".")
+	envVars := "CONJOINER_TASK_TOKEN, FABRIAL_SESSION_ACTIVE"
+	if pillars.DefaultResolver().ResolveShield(req).IsVisible() {
+		envVars = "HTTP_PROXY, " + envVars
+	}
+	fmt.Printf(`💎 Fabrial — The Sovereign AI Agent Security Fabric
 Ambient Session Broker, Multi-Agent Concurrency Coordinator & Scoped Security Fabric.
 
 Usage:
@@ -144,6 +153,7 @@ Usage:
   fabrial daemon [status|start|stop|restart]
   fabrial serve [--socket <path>] [--port <port>]
   fabrial integrate [superengineering] [path] [--global]
+  fabrial trust [pillar <name>|list|remove <name>] [--json]
   fabrial version
 
 Ambient Multi-Agent Session Management (Zero Hot-Path Hop Tax):
@@ -154,7 +164,7 @@ Ambient Multi-Agent Session Management (Zero Hot-Path Hop Tax):
       Derives short-lived (60s) attenuated subagent tokens with ZERO biometric interruptions.
 
   eval $(fabrial session env)
-      Exports ambient environment (HTTP_PROXY, CONJOINER_TASK_TOKEN, FABRIAL_SESSION_ACTIVE)
+      Exports ambient environment (%s)
       allowing agents and subagents to execute tools directly with zero wrapper latency.
 
   fabrial session list
@@ -194,102 +204,180 @@ Execution Flags:
   --airgap              Total offline network isolation
   --net                 Permit direct outbound networking
   --dry-run             Preview the routing decision and command without executing
-  -q, --quiet           Suppress Fabrial routing banner output`)
+  -q, --quiet           Suppress Fabrial routing banner output
+`, envVars)
 }
 
 func printVersion() {
+	req, _ := pillars.LoadRequirements("", ".")
+	res := pillars.DefaultResolver()
+
 	fmt.Printf("💎 Fabrial Unified Fabric v%s\n", version.Version)
 	fmt.Println("Pillars:")
 	fmt.Println("  • Airlock:    Kernel Confinement & Zero-VM Sandbox")
 	fmt.Println("  • Aegisbox:   Hardware MicroVM & Shadow CoW Workspace")
 	fmt.Println("  • Argus:      Pre-Gate AST Inspection & SIEM Telemetry Bus")
 	fmt.Println("  • Locksmith:  Biometric Hardware Vault & ETX Lease Engine")
-	fmt.Println("  • Shield:     Secret Redaction & Fail-Closed Wire Guard Proxy")
+	if res.ResolveShield(req).IsVisible() {
+		fmt.Println("  • Shield:     Secret Redaction & Fail-Closed Wire Guard Proxy")
+	}
 	fmt.Println("  • Conjoiner:  NIST SP 800-207A Agentic IAM & DPoP Token Broker")
-	fmt.Println("  • Stormcage:  Cross-Agent Context & Memory Firewall")
+	if res.ResolveStormcage(req).IsVisible() {
+		fmt.Println("  • Stormcage:  Cross-Agent Context & Memory Firewall")
+	}
 	fmt.Println("  • Soulcaster: Runtime Hermetic Compiler Attestation & SLSA Provenance")
 	fmt.Println("  • Bomhound:   CycloneDX Legal Attribution & Copyright Engine")
 }
 
+func renderFixForwardIfPresent(err error, stderr io.Writer, asJSON, showWhy bool) (int, bool) {
+	var ffe *ux.FixForwardError
+	if errors.As(err, &ffe) && ffe != nil {
+		_ = ffe.Render(stderr, asJSON, showWhy)
+		code := ffe.ExitCode
+		if code == 0 {
+			code = 1
+		}
+		return code, true
+	}
+	return 0, false
+}
+
 func handleExec(args []string) {
+	os.Exit(runExec(args, os.Stdout, os.Stderr))
+}
+
+func runExec(args []string, stdout, stderr io.Writer) int {
 	opts, cmdArgs, err := router.ParseArgs(args)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "fabrial: invalid arguments: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(stderr, "fabrial: invalid arguments: %v\n", err)
+		return 1
 	}
+	opts.Stdout = stdout
+	opts.Stderr = stderr
 
 	if len(cmdArgs) == 0 {
-		fmt.Fprintln(os.Stderr, "fabrial: no command specified for execution")
-		fmt.Fprintln(os.Stderr, "Usage: fabrial run [flags] [--] <command> [args...]")
-		os.Exit(1)
+		fmt.Fprintln(stderr, "fabrial: no command specified for execution")
+		fmt.Fprintln(stderr, "Usage: fabrial run [flags] [--] <command> [args...]")
+		return 1
 	}
 
 	ctx := context.Background()
 	decision, err := router.Route(opts, cmdArgs)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "fabrial: routing error: %v\n", err)
-		os.Exit(1)
+		if code, ok := renderFixForwardIfPresent(err, stderr, false, false); ok {
+			return code
+		}
+		fmt.Fprintf(stderr, "fabrial: routing error: %v\n", err)
+		return 1
 	}
 
 	exitCode, err := router.Execute(ctx, decision)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "fabrial: execution error: %v\n", err)
-		os.Exit(exitCode)
+		if code, ok := renderFixForwardIfPresent(err, stderr, false, false); ok {
+			return code
+		}
+		fmt.Fprintf(stderr, "fabrial: execution error: %v\n", err)
+		return exitCode
 	}
 
-	os.Exit(exitCode)
+	return exitCode
 }
 
 func handleDoctor(args []string) {
+	code := runDoctor(args, ".", os.Stdout, os.Stderr)
+	if code != 0 {
+		os.Exit(code)
+	}
+}
+
+func runDoctor(args []string, defaultDir string, stdout, stderr io.Writer) int {
 	asJSON := false
+	showWhy := false
 	doFix := false
-	for _, a := range args {
-		if a == "--json" {
+	projectDir := defaultDir
+	if projectDir == "" {
+		projectDir = "."
+	}
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch a {
+		case "--json":
 			asJSON = true
-		}
-		if a == "--fix" || a == "fix" {
+		case "--why":
+			showWhy = true
+		case "--fix", "fix":
 			doFix = true
+		case "--dir", "-d":
+			if i+1 < len(args) {
+				projectDir = args[i+1]
+				i++
+			}
 		}
 	}
 
 	if doFix {
-		handleFix(args)
-		return
+		return runFix(args, projectDir, stdout, stderr)
 	}
 
 	inspector := doctor.NewInspector(1 * time.Second)
-	results := inspector.InspectAll(context.Background(), ".")
+	results := inspector.InspectAll(context.Background(), projectDir)
 
 	if asJSON {
 		data, err := doctor.FormatJSON(results)
 		if err == nil {
-			fmt.Println(string(data))
+			fmt.Fprintln(stdout, string(data))
 		}
-		return
+	} else {
+		fmt.Fprintln(stdout, doctor.FormatTable(results))
 	}
 
-	fmt.Println(doctor.FormatTable(results))
+	if ffe := doctor.CheckRequiredHealth(results); ffe != nil {
+		_ = ffe.Render(stderr, asJSON, showWhy)
+		return ffe.ExitCode
+	}
+	return 0
 }
 
 func handleFix(args []string) {
+	code := runFix(args, ".", os.Stdout, os.Stderr)
+	if code != 0 {
+		os.Exit(code)
+	}
+}
+
+func runFix(args []string, defaultDir string, stdout, stderr io.Writer) int {
 	asJSON := false
+	showWhy := false
+	projectDir := defaultDir
+	if projectDir == "" {
+		projectDir = "."
+	}
 	var targetPillar string
-	for _, a := range args {
-		if a == "--json" {
+	for i := 0; i < len(args); i++ {
+		a := args[i]
+		switch {
+		case a == "--json":
 			asJSON = true
-		} else if a != "--fix" && a != "fix" && !strings.HasPrefix(a, "-") && targetPillar == "" {
+		case a == "--why":
+			showWhy = true
+		case (a == "--dir" || a == "-d") && i+1 < len(args):
+			projectDir = args[i+1]
+			i++
+		case a != "--fix" && a != "fix" && !strings.HasPrefix(a, "-") && targetPillar == "":
 			targetPillar = a
 		}
 	}
 
 	inspector := doctor.NewInspector(1 * time.Second)
-	sup := supervisor.NewDefaultSupervisor()
-	fixer := doctor.NewFixer(inspector, sup, ".")
+	sup := supervisor.NewSupervisorForDir(projectDir)
+	fixer := doctor.NewFixer(inspector, sup, projectDir)
 
 	ctx := context.Background()
 
 	if targetPillar != "" {
-		fmt.Printf("💎 Remediating degraded fabric component: %s...\n", targetPillar)
+		if !asJSON {
+			fmt.Fprintf(stdout, "💎 Remediating degraded fabric component: %s...\n", targetPillar)
+		}
 		actions, updatedReport := fixer.FixPillar(ctx, doctor.PillarID(targetPillar))
 		if asJSON {
 			out := map[string]interface{}{
@@ -297,16 +385,22 @@ func handleFix(args []string) {
 				"health":  updatedReport,
 			}
 			data, _ := json.MarshalIndent(out, "", "  ")
-			fmt.Println(string(data))
-			return
+			fmt.Fprintln(stdout, string(data))
+		} else {
+			fmt.Fprintln(stdout, doctor.FormatFixTable(actions))
+			fmt.Fprintf(stdout, "✔ %-12s [%-8s] %s\n", updatedReport.Pillar, updatedReport.Status, updatedReport.Details)
 		}
 
-		fmt.Println(doctor.FormatFixTable(actions))
-		fmt.Printf("✔ %-12s [%-8s] %s\n", updatedReport.Pillar, updatedReport.Status, updatedReport.Details)
-		return
+		if ffe := doctor.CheckRequiredHealth([]doctor.PillarHealth{updatedReport}); ffe != nil {
+			_ = ffe.Render(stderr, asJSON, showWhy)
+			return ffe.ExitCode
+		}
+		return 0
 	}
 
-	fmt.Println("💎 Scanning and remediating degraded fabric components...")
+	if !asJSON {
+		fmt.Fprintln(stdout, "💎 Scanning and remediating degraded fabric components...")
+	}
 	actions, updatedReports := fixer.FixAll(ctx)
 
 	if asJSON {
@@ -315,31 +409,43 @@ func handleFix(args []string) {
 			"health":  updatedReports,
 		}
 		data, _ := json.MarshalIndent(out, "", "  ")
-		fmt.Println(string(data))
-		return
+		fmt.Fprintln(stdout, string(data))
+	} else {
+		if len(actions) > 0 {
+			fmt.Fprintln(stdout, doctor.FormatFixTable(actions))
+			fmt.Fprintln(stdout, "\nRe-evaluating fabric diagnostics...")
+		}
+		fmt.Fprintln(stdout, doctor.FormatTable(updatedReports))
 	}
 
-	if len(actions) > 0 {
-		fmt.Println(doctor.FormatFixTable(actions))
-		fmt.Println("\nRe-evaluating fabric diagnostics...")
+	if ffe := doctor.CheckRequiredHealth(updatedReports); ffe != nil {
+		_ = ffe.Render(stderr, asJSON, showWhy)
+		return ffe.ExitCode
 	}
-	fmt.Println(doctor.FormatTable(updatedReports))
+	return 0
 }
 
 func handleDaemon(args []string) {
+	code := runDaemon(args, ".", os.Stdout, os.Stderr)
+	if code != 0 {
+		os.Exit(code)
+	}
+}
+
+func runDaemon(args []string, projectDir string, stdout, stderr io.Writer) int {
 	action := "status"
 	if len(args) > 0 {
 		action = args[0]
 	}
 
-	sup := supervisor.NewDefaultSupervisor()
+	sup := supervisor.NewSupervisorForDir(projectDir)
 	ctx := context.Background()
 
 	switch action {
 	case "status":
 		statuses := sup.StatusAll(ctx)
-		fmt.Println("💎 Fabrial Resident Daemons Status")
-		fmt.Println(strings.Repeat("─", 65))
+		fmt.Fprintln(stdout, "💎 Fabrial Resident Daemons Status")
+		fmt.Fprintln(stdout, strings.Repeat("─", 65))
 		for _, s := range statuses {
 			icon := "✅"
 			if s.State != supervisor.StateRunning {
@@ -349,43 +455,59 @@ func handleDaemon(args []string) {
 			if s.PID > 0 {
 				pidStr = fmt.Sprintf(" (PID %d)", s.PID)
 			}
-			fmt.Printf("%s %-12s [%-7s] %s%s\n", icon, s.Name, s.State, s.Message, pidStr)
+			fmt.Fprintf(stdout, "%s %-12s [%-7s] %s%s\n", icon, s.Name, s.State, s.Message, pidStr)
 		}
-		fmt.Println(strings.Repeat("─", 65))
+		fmt.Fprintln(stdout, strings.Repeat("─", 65))
+		if ffe := sup.CheckRequiredStatuses(statuses); ffe != nil {
+			_ = ffe.Render(stderr, false, false)
+			return ffe.ExitCode
+		}
+		return 0
 
 	case "start":
-		fmt.Println("💎 Starting Fabrial Sovereign Security Fabric Resident Daemons...")
-		fmt.Println(strings.Repeat("─", 65))
+		fmt.Fprintln(stdout, "💎 Starting Fabrial Sovereign Security Fabric Resident Daemons...")
+		fmt.Fprintln(stdout, strings.Repeat("─", 65))
 		statuses := sup.StartAll(ctx)
 		for _, s := range statuses {
 			icon := "✔"
 			if s.State == supervisor.StateError {
 				icon = "❌"
 			}
-			fmt.Printf("%s %-12s: %s\n", icon, s.Name, s.Message)
+			fmt.Fprintf(stdout, "%s %-12s: %s\n", icon, s.Name, s.Message)
 		}
-		fmt.Println(strings.Repeat("─", 65))
-		fmt.Println("💎 Run 'fabrial doctor' to verify multi-pillar health.")
+		fmt.Fprintln(stdout, strings.Repeat("─", 65))
+		fmt.Fprintln(stdout, "💎 Run 'fabrial doctor' to verify multi-pillar health.")
+		if ffe := sup.CheckRequiredStatuses(statuses); ffe != nil {
+			_ = ffe.Render(stderr, false, false)
+			return ffe.ExitCode
+		}
+		return 0
 
 	case "stop":
-		fmt.Println("💎 Stopping Fabrial Sovereign Security Fabric Resident Daemons...")
-		fmt.Println(strings.Repeat("─", 65))
+		fmt.Fprintln(stdout, "💎 Stopping Fabrial Sovereign Security Fabric Resident Daemons...")
+		fmt.Fprintln(stdout, strings.Repeat("─", 65))
 		statuses := sup.StopAll(ctx)
 		for _, s := range statuses {
-			fmt.Printf("✔ %-12s: %s\n", s.Name, s.Message)
+			fmt.Fprintf(stdout, "✔ %-12s: %s\n", s.Name, s.Message)
 		}
-		fmt.Println(strings.Repeat("─", 65))
-		fmt.Println("💎 All resident fabric daemons stopped.")
+		fmt.Fprintln(stdout, strings.Repeat("─", 65))
+		fmt.Fprintln(stdout, "💎 All resident fabric daemons stopped.")
+		return 0
 
 	case "restart":
 		_ = sup.StopAll(ctx)
 		time.Sleep(500 * time.Millisecond)
-		_ = sup.StartAll(ctx)
-		fmt.Println("💎 All resident fabric daemons restarted.")
+		statuses := sup.StartAll(ctx)
+		fmt.Fprintln(stdout, "💎 All resident fabric daemons restarted.")
+		if ffe := sup.CheckRequiredStatuses(statuses); ffe != nil {
+			_ = ffe.Render(stderr, false, false)
+			return ffe.ExitCode
+		}
+		return 0
 
 	default:
-		fmt.Fprintf(os.Stderr, "Unknown daemon command: %q. Usage: fabrial daemon [status|start|stop|restart]\n", action)
-		os.Exit(1)
+		fmt.Fprintf(stderr, "Unknown daemon command: %q. Usage: fabrial daemon [status|start|stop|restart]\n", action)
+		return 1
 	}
 }
 
@@ -931,6 +1053,9 @@ Supported targets:
 			res, err = integration.SuperEngineering(targetDir)
 		}
 		if err != nil {
+			if code, ok := renderFixForwardIfPresent(err, os.Stderr, false, false); ok {
+				os.Exit(code)
+			}
 			fmt.Fprintf(os.Stderr, "Error: integration failed: %v\n", err)
 			os.Exit(1)
 		}
@@ -1049,7 +1174,8 @@ func handleSession(args []string) {
 	case "begin", "start":
 		ttl := 30 * time.Minute
 		scopes := []string{"read", "build", "test", "lint"}
-		proxyAddr := "127.0.0.1:8443"
+		proxyAddr := ""
+		explicitProxy := false
 		biometric := true
 
 		for i := 0; i < len(subArgs); i++ {
@@ -1071,20 +1197,36 @@ func handleSession(args []string) {
 			case "--proxy":
 				if i+1 < len(subArgs) {
 					proxyAddr = subArgs[i+1]
+					explicitProxy = true
 					i++
 				}
 			}
 		}
 
 		wd, _ := os.Getwd()
+		req, _ := pillars.LoadRequirements("", wd)
+		resolvedProxy, proxyErr := session.ResolveSessionProxyAddr(proxyAddr, explicitProxy, pillars.DefaultResolver(), req)
+		if proxyErr != nil {
+			if code, ok := renderFixForwardIfPresent(proxyErr, os.Stderr, false, false); ok {
+				os.Exit(code)
+			}
+			fmt.Fprintf(os.Stderr, "Error creating session: %v\n", proxyErr)
+			os.Exit(1)
+		}
+
 		grant, err := sm.BeginSession(context.Background(), session.SessionConfig{
 			WorkspacePath:      wd,
 			TTL:                ttl,
 			AllowedScopes:      scopes,
 			BiometricPreflight: biometric,
-			ShieldProxyAddr:    proxyAddr,
+			ShieldProxyAddr:    resolvedProxy,
+			RequireShield:      req.RequireShield,
+			RequireStormcage:   req.RequireStormcage,
 		})
 		if err != nil {
+			if code, ok := renderFixForwardIfPresent(err, os.Stderr, false, false); ok {
+				os.Exit(code)
+			}
 			fmt.Fprintf(os.Stderr, "Error creating session: %v\n", err)
 			os.Exit(1)
 		}
@@ -1282,6 +1424,7 @@ func handleSessionLaunch(args []string, sm *session.SessionManager) {
 		os.Exit(1)
 	}
 
+	wd, _ := os.Getwd()
 	cfg := session.LaunchConfig{
 		Profile:          profile,
 		TargetCommand:    targetCmd,
@@ -1289,10 +1432,14 @@ func handleSessionLaunch(args []string, sm *session.SessionManager) {
 		UseAirlock:       useAirlock,
 		AllowUnsandboxed: allowUnsandboxed,
 		Biometric:        biometric,
+		WorkDir:          wd,
 	}
 
 	ctx := context.Background()
 	if err := session.LaunchSession(ctx, sm, cfg); err != nil {
+		if code, ok := renderFixForwardIfPresent(err, os.Stderr, false, false); ok {
+			os.Exit(code)
+		}
 		fmt.Fprintf(os.Stderr, "Error launching session: %v\n", err)
 		os.Exit(1)
 	}
@@ -1571,11 +1718,29 @@ func printAuthSummary(verb string, authCtx *auth.FabrialAuthContext, bundle *aut
 		}
 		fmt.Printf("✔ Bearer Token:          %s (saved to ~/.fabrial/auth.json)\n", tokenPreview)
 	}
+	req, _ := pillars.LoadRequirements("", ".")
+	if toolchain != nil {
+		req.RequireShield = req.RequireShield || toolchain.Fabrial.RequireShield
+		req.RequireStormcage = req.RequireStormcage || toolchain.Fabrial.RequireStormcage
+	}
+	res := pillars.DefaultResolver()
+	shieldVisible := res.ResolveShield(req).IsVisible()
+	stormcageVisible := res.ResolveStormcage(req).IsVisible()
+	toolCount := 8
+	if shieldVisible {
+		toolCount++
+	}
+	if stormcageVisible {
+		toolCount++
+	}
+
 	fmt.Printf("✔ Policy Bundle:         Version %d (verified Ed25519 signature)\n", bundle.Version)
-	fmt.Printf("✔ Toolchain Policies:    Synchronized across all 10 sovereign tools\n")
+	fmt.Printf("✔ Toolchain Policies:    Synchronized across %d active sovereign tools\n", toolCount)
 	fmt.Printf("                         - Argus: %d allowed registries, %d blocked\n", len(toolchain.Argus.AllowedRegistries), len(toolchain.Argus.BlockedRegistries))
 	fmt.Printf("                         - Locksmith: cert issuance=%v, %d domains\n", toolchain.Locksmith.CertIssuanceEnabled, len(toolchain.Locksmith.AllowedCertDomains))
-	fmt.Printf("                         - Shield: anti-ssrf=%v, fail-closed=%v\n", toolchain.Shield.BlockCloudMetadata, toolchain.Shield.FailClosedWireGuard)
+	if shieldVisible {
+		fmt.Printf("                         - Shield: anti-ssrf=%v, fail-closed=%v\n", toolchain.Shield.BlockCloudMetadata, toolchain.Shield.FailClosedWireGuard)
+	}
 	fmt.Println(strings.Repeat("─", 75))
 }
 
@@ -1611,9 +1776,27 @@ func handleAuthLogout() {
 }
 
 func handlePolicy(args []string) {
+	code := runPolicy(args, ".", os.Stdout, os.Stderr)
+	if code != 0 {
+		os.Exit(code)
+	}
+}
+
+func runPolicy(args []string, projectDir string, stdout, stderr io.Writer) int {
+	req, reqErr := pillars.LoadRequirements("", projectDir)
+	if reqErr == nil {
+		if err := pillars.DefaultResolver().EnforceRequired(req); err != nil {
+			if code, ok := renderFixForwardIfPresent(err, stderr, false, false); ok {
+				return code
+			}
+			fmt.Fprintf(stderr, "❌ Required pillar check failed: %v\n", err)
+			return pillars.ExitCodeRequiredMissing
+		}
+	}
+
 	if len(args) > 0 && args[0] == "status" {
 		handleAuthStatus()
-		return
+		return 0
 	}
 
 	insecure := false
@@ -1622,22 +1805,45 @@ func handlePolicy(args []string) {
 		case "--insecure-tls":
 			insecure = true
 		case "--insecure":
-			fmt.Fprintf(os.Stderr, "Error: --insecure is disallowed; pass --insecure-tls to explicitly bypass TLS verification\n")
-			os.Exit(1)
+			fmt.Fprintf(stderr, "Error: --insecure is disallowed; pass --insecure-tls to explicitly bypass TLS verification\n")
+			return 1
 		}
 	}
 
-	fmt.Println("Pulling signed policy bundle from Stoneward control plane...")
+	fmt.Fprintln(stdout, "Pulling signed policy bundle from Stoneward control plane...")
 	bundle, toolchain, err := auth.PullPolicy(insecure)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "❌ Policy pull failed: %v\n", err)
-		os.Exit(1)
+		fmt.Fprintf(stderr, "❌ Policy pull failed: %v\n", err)
+		return 1
 	}
 
-	fmt.Println(strings.Repeat("─", 75))
-	fmt.Printf("✔ Policy bundle verified and cached! (Version %d, Tenant: %s)\n", bundle.Version, bundle.TenantID)
-	fmt.Printf("✔ Blocked Syscalls:   %d prohibited (anti-loopback=%v)\n", len(bundle.Rule.BlockedSyscalls), bundle.Rule.BlockLoopbackNet)
-	fmt.Printf("✔ Required Tiers:     %d command routing overrides\n", len(bundle.Rule.RequiredTiers))
-	fmt.Printf("✔ Toolchain Policies: Synchronized across 10 sovereign tools (Argus allowed regs: %d)\n", len(toolchain.Argus.AllowedRegistries))
-	fmt.Println(strings.Repeat("─", 75))
+	if toolchain != nil {
+		mergedReq := pillars.Requirements{
+			RequireShield:    req.RequireShield || toolchain.Fabrial.RequireShield,
+			RequireStormcage: req.RequireStormcage || toolchain.Fabrial.RequireStormcage,
+		}
+		if err := pillars.DefaultResolver().EnforceRequired(mergedReq); err != nil {
+			if code, ok := renderFixForwardIfPresent(err, stderr, false, false); ok {
+				return code
+			}
+			return pillars.ExitCodeRequiredMissing
+		}
+	}
+
+	res := pillars.DefaultResolver()
+	toolCount := 8
+	if res.ResolveShield(req).IsVisible() {
+		toolCount++
+	}
+	if res.ResolveStormcage(req).IsVisible() {
+		toolCount++
+	}
+
+	fmt.Fprintln(stdout, strings.Repeat("─", 75))
+	fmt.Fprintf(stdout, "✔ Policy bundle verified and cached! (Version %d, Tenant: %s)\n", bundle.Version, bundle.TenantID)
+	fmt.Fprintf(stdout, "✔ Blocked Syscalls:   %d prohibited (anti-loopback=%v)\n", len(bundle.Rule.BlockedSyscalls), bundle.Rule.BlockLoopbackNet)
+	fmt.Fprintf(stdout, "✔ Required Tiers:     %d command routing overrides\n", len(bundle.Rule.RequiredTiers))
+	fmt.Fprintf(stdout, "✔ Toolchain Policies: Synchronized across %d active sovereign tools (Argus allowed regs: %d)\n", toolCount, len(toolchain.Argus.AllowedRegistries))
+	fmt.Fprintln(stdout, strings.Repeat("─", 75))
+	return 0
 }

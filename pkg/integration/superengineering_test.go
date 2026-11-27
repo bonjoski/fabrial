@@ -2,9 +2,13 @@ package integration
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/bonjoski/fabrial/pkg/pillars"
+	"github.com/bonjoski/fabrial/pkg/ux"
 )
 
 func TestDefaultCommands(t *testing.T) {
@@ -55,61 +59,111 @@ func TestDefaultCommands(t *testing.T) {
 }
 
 func TestSuperEngineering_FreshDirectory(t *testing.T) {
-	tempDir := t.TempDir()
+	t.Run("State1_ShieldAbsent_NoShieldRunScript", func(t *testing.T) {
+		tempDir := t.TempDir()
+		emptyBin := t.TempDir()
+		resolver := &pillars.Resolver{Lookup: pillars.LookupInPATH(emptyBin)}
 
-	res, err := SuperEngineering(tempDir)
-	if err != nil {
-		t.Fatalf("SuperEngineering failed: %v", err)
-	}
+		res, err := SuperEngineeringWithResolver(tempDir, resolver)
+		if err != nil {
+			t.Fatalf("SuperEngineeringWithResolver failed: %v", err)
+		}
 
-	if !res.Created {
-		t.Errorf("expected Created to be true on fresh directory")
-	}
-	if len(res.CommandsAdded) != 2 {
-		t.Errorf("expected 2 commands added, got %d: %v", len(res.CommandsAdded), res.CommandsAdded)
-	}
-	if len(res.SetupAdded) != 1 || res.SetupAdded[0] != "fabrial doctor" {
-		t.Errorf("unexpected SetupAdded: %v", res.SetupAdded)
-	}
-	if len(res.RunAdded) != 1 || res.RunAdded[0] != "shield" {
-		t.Errorf("unexpected RunAdded: %v", res.RunAdded)
-	}
+		if !res.Created {
+			t.Errorf("expected Created to be true on fresh directory")
+		}
+		if len(res.CommandsAdded) != 2 {
+			t.Errorf("expected 2 commands added, got %d: %v", len(res.CommandsAdded), res.CommandsAdded)
+		}
+		if len(res.SetupAdded) != 1 || res.SetupAdded[0] != "fabrial doctor" {
+			t.Errorf("unexpected SetupAdded: %v", res.SetupAdded)
+		}
+		if len(res.RunAdded) != 0 {
+			t.Errorf("State 1: expected zero run scripts added when shield is absent, got: %v", res.RunAdded)
+		}
 
-	// Verify file on disk
-	configPath := filepath.Join(tempDir, ".super.engineering", "config.json")
-	data, err := os.ReadFile(configPath)
-	if err != nil {
-		t.Fatalf("failed to read generated config: %v", err)
-	}
+		configPath := filepath.Join(tempDir, ".super.engineering", "config.json")
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatalf("failed to read generated config: %v", err)
+		}
+		var parsed map[string]interface{}
+		if err := json.Unmarshal(data, &parsed); err != nil {
+			t.Fatalf("invalid JSON generated: %v", err)
+		}
+		if _, hasRun := parsed["run"]; hasRun {
+			t.Errorf("State 1: expected no 'run' key in fresh config when shield is absent, got: %v", parsed["run"])
+		}
+	})
 
-	var parsed map[string]interface{}
-	if err := json.Unmarshal(data, &parsed); err != nil {
-		t.Fatalf("invalid JSON generated: %v", err)
-	}
+	t.Run("State2_ShieldInstalled_ShieldRunScriptAdded", func(t *testing.T) {
+		tempDir := t.TempDir()
+		resolver := &pillars.Resolver{
+			Lookup:            pillars.StaticLookup(map[string]string{"shield": "/opt/homebrew/Cellar/shield/0.4.0/bin/shield"}),
+			DisableTrustStore: true,
+		}
 
-	setupList := parsed["setup"].([]interface{})
-	if len(setupList) != 1 || setupList[0] != "fabrial doctor" {
-		t.Errorf("unexpected setup in JSON: %v", setupList)
-	}
+		res, err := SuperEngineeringWithResolver(tempDir, resolver)
+		if err != nil {
+			t.Fatalf("SuperEngineeringWithResolver failed: %v", err)
+		}
+		if len(res.RunAdded) != 1 || res.RunAdded[0] != "shield" {
+			t.Errorf("State 2: expected RunAdded=[shield], got %v", res.RunAdded)
+		}
 
-	cmdList := parsed["commands"].([]interface{})
-	if len(cmdList) != 2 {
-		t.Errorf("expected 2 commands in JSON, got %d", len(cmdList))
-	}
+		// Verify file on disk
+		configPath := filepath.Join(tempDir, ".super.engineering", "config.json")
+		data, err := os.ReadFile(configPath)
+		if err != nil {
+			t.Fatalf("failed to read generated config: %v", err)
+		}
 
-	// Verify specific command contents in JSON
-	cmdMap := make(map[string]map[string]interface{})
-	for _, raw := range cmdList {
-		m := raw.(map[string]interface{})
-		cmdMap[m["name"].(string)] = m
-	}
+		var parsed map[string]interface{}
+		if err := json.Unmarshal(data, &parsed); err != nil {
+			t.Fatalf("invalid JSON generated: %v", err)
+		}
 
-	if doc, ok := cmdMap["stack-doctor"]; !ok || doc["command"] != "fabrial doctor --fix" {
-		t.Errorf("expected stack-doctor to have command 'fabrial doctor --fix', got %v", doc["command"])
-	}
-	if pf, ok := cmdMap["pre-flight"]; !ok || pf["command"] != "argus vet --diff && soulcaster verify-patch -base HEAD" {
-		t.Errorf("expected pre-flight to have command 'argus vet --diff && soulcaster verify-patch -base HEAD', got %v", pf["command"])
-	}
+		setupList := parsed["setup"].([]interface{})
+		if len(setupList) != 1 || setupList[0] != "fabrial doctor" {
+			t.Errorf("unexpected setup in JSON: %v", setupList)
+		}
+
+		cmdList := parsed["commands"].([]interface{})
+		if len(cmdList) != 2 {
+			t.Errorf("expected 2 commands in JSON, got %d", len(cmdList))
+		}
+
+		cmdMap := make(map[string]map[string]interface{})
+		for _, raw := range cmdList {
+			m := raw.(map[string]interface{})
+			cmdMap[m["name"].(string)] = m
+		}
+
+		if doc, ok := cmdMap["stack-doctor"]; !ok || doc["command"] != "fabrial doctor --fix" {
+			t.Errorf("expected stack-doctor to have command 'fabrial doctor --fix', got %v", doc["command"])
+		}
+		if pf, ok := cmdMap["pre-flight"]; !ok || pf["command"] != "argus vet --diff && soulcaster verify-patch -base HEAD" {
+			t.Errorf("expected pre-flight to have command 'argus vet --diff && soulcaster verify-patch -base HEAD', got %v", pf["command"])
+		}
+	})
+
+	t.Run("State3_RequireShieldMissing_FailClosedExit126", func(t *testing.T) {
+		tempDir := t.TempDir()
+		emptyBin := t.TempDir()
+		if err := os.WriteFile(filepath.Join(tempDir, "fabrial.yaml"), []byte("version: \"1\"\nrequire_shield: true\n"), 0644); err != nil {
+			t.Fatalf("write fabrial.yaml: %v", err)
+		}
+		resolver := &pillars.Resolver{Lookup: pillars.LookupInPATH(emptyBin)}
+
+		_, err := SuperEngineeringWithResolver(tempDir, resolver)
+		if err == nil {
+			t.Fatal("FAIL-OPEN: expected SuperEngineeringWithResolver to fail closed when require_shield: true and shield is missing")
+		}
+		var ffe *ux.FixForwardError
+		if !errors.As(err, &ffe) || ffe.ExitCode != pillars.ExitCodeRequiredMissing {
+			t.Fatalf("expected FixForwardError exit 126, got %v", err)
+		}
+	})
 }
 
 func TestSuperEngineering_PrunesDeprecatedCommands(t *testing.T) {

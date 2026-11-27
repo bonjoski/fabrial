@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/bonjoski/fabrial/pkg/pillars"
 )
 
 type mockDaemonManager struct {
@@ -133,4 +135,48 @@ func TestFixer_DaemonManagerInteraction(t *testing.T) {
 		t.Fatalf("expected Airlock report, got: %s", report.Pillar)
 	}
 	_ = actions
+}
+
+func TestFixer_OptionalPillars_State1AndState3(t *testing.T) {
+	ctx := context.Background()
+	homeDir := t.TempDir()
+	t.Setenv("HOME", homeDir)
+
+	// State 1: shield absent & unrequired -> FixPillar("shield") skips cleanly without creating ~/.shield
+	emptyBin := t.TempDir()
+	workDir := t.TempDir()
+	inspector := NewInspector(100 * time.Millisecond)
+	inspector.Resolver = &pillars.Resolver{Lookup: pillars.LookupInPATH(emptyBin)}
+	dm := newMockDaemonManager()
+	fixer := NewFixer(inspector, dm, workDir)
+
+	actions, rep := fixer.FixPillar(ctx, PillarShield)
+	if rep.Status != StatusOptional {
+		t.Fatalf("State 1: expected StatusOptional for explicit FixPillar(Shield), got %+v", rep)
+	}
+	if len(actions) != 1 || !actions[0].Success {
+		t.Fatalf("State 1: expected single clean skip action, got %+v", actions)
+	}
+	if _, err := os.Stat(filepath.Join(homeDir, ".shield")); !os.IsNotExist(err) {
+		t.Fatalf("State 1: FixPillar must not create ~/.shield when Shield is absent")
+	}
+	if dm.started["shield"] {
+		t.Fatalf("State 1: FixPillar must not attempt to start Shield daemon")
+	}
+
+	// State 3: require_shield: true & missing binary -> FixPillar fails closed with Required=true
+	if err := os.WriteFile(filepath.Join(workDir, "fabrial.yaml"), []byte("version: \"1\"\nrequire_shield: true\n"), 0644); err != nil {
+		t.Fatalf("write fabrial.yaml: %v", err)
+	}
+	actions3, rep3 := fixer.FixPillar(ctx, PillarShield)
+	if rep3.Status != StatusOffline || !rep3.Required {
+		t.Fatalf("State 3: expected StatusOffline+Required, got %+v", rep3)
+	}
+	if len(actions3) == 0 || actions3[0].Success {
+		t.Fatalf("State 3: expected failing action, got %+v", actions3)
+	}
+	ffe := CheckRequiredHealth([]PillarHealth{rep3})
+	if ffe == nil || ffe.ExitCode != pillars.ExitCodeRequiredMissing {
+		t.Fatalf("State 3: expected CheckRequiredHealth exit 126, got %v", ffe)
+	}
 }

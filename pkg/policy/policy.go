@@ -203,18 +203,32 @@ type SupplyChainConfig struct {
 
 // Policy defines the standardized schema for fabrial.yaml.
 type Policy struct {
-	Version     string             `yaml:"version" json:"version"`
-	Name        string             `yaml:"name,omitempty" json:"name,omitempty"`
-	DefaultTier Tier               `yaml:"default_tier,omitempty" json:"default_tier,omitempty"`
-	Tier1       TierDefinition     `yaml:"tier1,omitempty" json:"tier1,omitempty"`
-	Tier2       TierDefinition     `yaml:"tier2,omitempty" json:"tier2,omitempty"`
-	Routing     *RoutingConfig     `yaml:"routing,omitempty" json:"routing,omitempty"`
-	Rules       []Rule             `yaml:"rules,omitempty" json:"rules,omitempty"`
-	Attestation *AttestationConfig `yaml:"attestation,omitempty" json:"attestation,omitempty"`
-	Shield      *ShieldConfig      `yaml:"shield,omitempty" json:"shield,omitempty"`
-	Firewall    *FirewallConfig    `yaml:"firewall,omitempty" json:"firewall,omitempty"`
-	IAM         *IAMConfig         `yaml:"iam,omitempty" json:"iam,omitempty"`
-	SupplyChain *SupplyChainConfig `yaml:"supply_chain,omitempty" json:"supply_chain,omitempty"`
+	Version             string             `yaml:"version" json:"version"`
+	Name                string             `yaml:"name,omitempty" json:"name,omitempty"`
+	DefaultTier         Tier               `yaml:"default_tier,omitempty" json:"default_tier,omitempty"`
+	RequireShield       bool               `yaml:"require_shield,omitempty" json:"require_shield,omitempty"`
+	RequireStormcage    bool               `yaml:"require_stormcage,omitempty" json:"require_stormcage,omitempty"`
+	StrictPillarPinning bool               `yaml:"strict_pillar_pinning,omitempty" json:"strict_pillar_pinning,omitempty"`
+	PillarDigests       map[string]string  `yaml:"pillar_digests,omitempty" json:"pillar_digests,omitempty"`
+	Tier1               TierDefinition     `yaml:"tier1,omitempty" json:"tier1,omitempty"`
+	Tier2               TierDefinition     `yaml:"tier2,omitempty" json:"tier2,omitempty"`
+	Routing             *RoutingConfig     `yaml:"routing,omitempty" json:"routing,omitempty"`
+	Rules               []Rule             `yaml:"rules,omitempty" json:"rules,omitempty"`
+	Attestation         *AttestationConfig `yaml:"attestation,omitempty" json:"attestation,omitempty"`
+	Shield              *ShieldConfig      `yaml:"shield,omitempty" json:"shield,omitempty"`
+	Firewall            *FirewallConfig    `yaml:"firewall,omitempty" json:"firewall,omitempty"`
+	IAM                 *IAMConfig         `yaml:"iam,omitempty" json:"iam,omitempty"`
+	SupplyChain         *SupplyChainConfig `yaml:"supply_chain,omitempty" json:"supply_chain,omitempty"`
+}
+
+// IsShieldRequired reports whether the policy explicitly mandates Shield (fail-closed if absent).
+func (p *Policy) IsShieldRequired() bool {
+	return p != nil && p.RequireShield
+}
+
+// IsStormcageRequired reports whether the policy explicitly mandates Stormcage (fail-closed if absent).
+func (p *Policy) IsStormcageRequired() bool {
+	return p != nil && p.RequireStormcage
 }
 
 // GetDefaultTier returns the configured default tier or Tier1 if unspecified.

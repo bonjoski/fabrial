@@ -2,6 +2,7 @@ package router
 
 import (
 	"context"
+	"errors"
 	"net"
 	"os"
 	"path/filepath"
@@ -9,7 +10,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/bonjoski/fabrial/pkg/pillars"
 	"github.com/bonjoski/fabrial/pkg/policy"
+	"github.com/bonjoski/fabrial/pkg/ux"
 )
 
 // TestAdversarial_SocketSecurityAttestation verifies Invariant #2:
@@ -589,4 +592,99 @@ func TestAdversarial_ArchiveZipSlipEscalation(t *testing.T) {
 			t.Errorf("FALSE POSITIVE: benign archive command %v escalated to %v (reason: %s)", cmd, dec.Tier, dec.Reason)
 		}
 	}
+}
+
+// TestAdversarial_OptionalPillars_3StateRouting verifies State 1 (invisible),
+// State 2 (auto-discovered), and State 3 (fail-closed exit 126 on missing/spoofed required binaries).
+func TestAdversarial_OptionalPillars_3StateRouting(t *testing.T) {
+	// Ensure no stale SHIELD_PROXY_ADDR interferes
+	t.Setenv("SHIELD_PROXY_ADDR", "")
+
+	t.Run("State1_ShieldAbsent_NetDoesNotFailOrInjectDeadProxy", func(t *testing.T) {
+		emptyBin := t.TempDir()
+		workDir := t.TempDir()
+		policyFile := filepath.Join(workDir, "fabrial.yaml")
+		if err := os.WriteFile(policyFile, []byte("version: \"1\"\ndefault_tier: 1\n"), 0644); err != nil {
+			t.Fatalf("write policy: %v", err)
+		}
+
+		dec, err := Route(&ExecutionOptions{
+			PolicyPath:     policyFile,
+			Net:            true,
+			Quiet:          true,
+			DryRun:         true,
+			PillarResolver: &pillars.Resolver{Lookup: pillars.LookupInPATH(emptyBin)},
+		}, []string{"curl", "https://example.com"})
+		if err != nil {
+			t.Fatalf("State 1: Route with --net failed when shield is absent & unrequired: %v", err)
+		}
+		for _, env := range dec.InjectedEnv {
+			if strings.HasPrefix(env, "HTTP_PROXY=") || strings.HasPrefix(env, "SOVEREIGN_SHIELD_ACTIVE=") {
+				t.Fatalf("State 1: injected dead Shield proxy env %q when shield is absent", env)
+			}
+		}
+	})
+
+	t.Run("State3_RequireShieldOrStormcageMissing_FailClosedExit126", func(t *testing.T) {
+		emptyBin := t.TempDir()
+		for _, tc := range []struct {
+			name string
+			yaml string
+		}{
+			{"RequireShield", "version: \"1\"\nrequire_shield: true\n"},
+			{"RequireStormcage", "version: \"1\"\nrequire_stormcage: true\n"},
+		} {
+			t.Run(tc.name, func(t *testing.T) {
+				pFile := filepath.Join(t.TempDir(), "fabrial.yaml")
+				if err := os.WriteFile(pFile, []byte(tc.yaml), 0644); err != nil {
+					t.Fatalf("write policy: %v", err)
+				}
+				_, err := Route(&ExecutionOptions{
+					PolicyPath:     pFile,
+					Quiet:          true,
+					PillarResolver: &pillars.Resolver{Lookup: pillars.LookupInPATH(emptyBin)},
+				}, []string{"git", "status"})
+				if err == nil {
+					t.Fatalf("FAIL-OPEN (%s): Route succeeded despite missing required pillar", tc.name)
+				}
+				var ffe *ux.FixForwardError
+				if !errors.As(err, &ffe) || ffe.ExitCode != pillars.ExitCodeRequiredMissing {
+					t.Fatalf("expected FixForwardError exit 126, got %v", err)
+				}
+			})
+		}
+	})
+
+	t.Run("State3_AdversarialNonExecOrSymlinkDecoy_StillFailsClosed", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("POSIX permission/symlink test")
+		}
+		binDir := t.TempDir()
+		// Non-executable shield + spoofed symlink stormcage -> /bin/sh
+		if err := os.WriteFile(filepath.Join(binDir, "shield"), []byte("#!/bin/sh\nexit 0\n"), 0644); err != nil {
+			t.Fatalf("write non-exec shield: %v", err)
+		}
+		if err := os.Symlink("/bin/sh", filepath.Join(binDir, "stormcage")); err != nil {
+			t.Fatalf("symlink stormcage: %v", err)
+		}
+
+		for _, field := range []string{"require_shield: true", "require_stormcage: true"} {
+			pFile := filepath.Join(t.TempDir(), "fabrial.yaml")
+			if err := os.WriteFile(pFile, []byte("version: \"1\"\n"+field+"\n"), 0644); err != nil {
+				t.Fatalf("write policy: %v", err)
+			}
+			_, err := Route(&ExecutionOptions{
+				PolicyPath:     pFile,
+				Quiet:          true,
+				PillarResolver: &pillars.Resolver{Lookup: pillars.LookupInPATH(binDir)},
+			}, []string{"echo", "ok"})
+			if err == nil {
+				t.Fatalf("FAIL-OPEN (%s): Route accepted non-exec/symlink decoy", field)
+			}
+			var ffe *ux.FixForwardError
+			if !errors.As(err, &ffe) || ffe.ExitCode != pillars.ExitCodeRequiredMissing {
+				t.Fatalf("expected FixForwardError exit 126 for %s, got %v", field, err)
+			}
+		}
+	})
 }

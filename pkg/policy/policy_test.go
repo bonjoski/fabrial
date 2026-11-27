@@ -259,3 +259,27 @@ supply_chain:
 		t.Errorf("unexpected shield config: %+v", sc)
 	}
 }
+
+func TestPolicy_RequireOptionalPillarsDefaultsAndParsing(t *testing.T) {
+	// DefaultPolicy must leave optional private pillars unrequired (false)
+	def := DefaultPolicy()
+	if def.IsShieldRequired() || def.IsStormcageRequired() {
+		t.Fatalf("expected DefaultPolicy require_shield and require_stormcage to default to false")
+	}
+
+	var empty Policy
+	if err := yaml.Unmarshal([]byte("version: \"1\"\nname: \"public\"\n"), &empty); err != nil {
+		t.Fatalf("unmarshal empty: %v", err)
+	}
+	if empty.IsShieldRequired() || empty.IsStormcageRequired() {
+		t.Fatalf("expected omitted require_shield/require_stormcage to default to false")
+	}
+
+	var strict Policy
+	if err := yaml.Unmarshal([]byte("version: \"1\"\nrequire_shield: true\nrequire_stormcage: true\n"), &strict); err != nil {
+		t.Fatalf("unmarshal strict: %v", err)
+	}
+	if !strict.IsShieldRequired() || !strict.IsStormcageRequired() {
+		t.Fatalf("expected explicit require_shield and require_stormcage to be true, got %+v", strict)
+	}
+}
