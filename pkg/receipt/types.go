@@ -72,6 +72,7 @@ var (
 		"conjoiner":  {},
 		"halfshard":  {},
 		"stormcage":  {},
+		"tinmind":    {},
 		"flightdeck": {},
 		"fabrial":    {},
 	}
