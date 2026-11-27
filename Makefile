@@ -17,6 +17,7 @@ all: build test
 build:
 	@mkdir -p bin
 	go build -ldflags "$(LDFLAGS)" -o bin/fabrial ./cmd/fabrial
+	go build -ldflags "$(LDFLAGS)" -o bin/fabrial-top ./cmd/fabrial-top
 
 test:
 	go test -v ./...
@@ -27,9 +28,10 @@ doctor: build
 install: build
 	install -d $(DESTDIR)$(BINDIR)
 	install -m 755 bin/fabrial $(DESTDIR)$(BINDIR)/fabrial
+	install -m 755 bin/fabrial-top $(DESTDIR)$(BINDIR)/fabrial-top
 
 uninstall:
-	rm -f $(DESTDIR)$(BINDIR)/fabrial
+	rm -f $(DESTDIR)$(BINDIR)/fabrial $(DESTDIR)$(BINDIR)/fabrial-top
 
 clean:
 	rm -rf bin/

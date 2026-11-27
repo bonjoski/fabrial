@@ -32,6 +32,7 @@ class Fabrial < Formula
     ]
 
     system "go", "build", *std_go_args(output: bin/"fabrial", ldflags: ldflags.join(" ")), "./cmd/fabrial"
+    system "go", "build", *std_go_args(output: bin/"fabrial-top", ldflags: ldflags.join(" ")), "./cmd/fabrial-top"
   end
 
   def caveats
@@ -52,6 +53,7 @@ class Fabrial < Formula
 
   test do
     assert_match "Fabrial Unified Fabric", shell_output("#{bin}/fabrial version")
+    assert_match "fabrial-top", shell_output("#{bin}/fabrial-top --version")
     assert_match "Fabrial Multi-Pillar Diagnostic Suite", shell_output("#{bin}/fabrial doctor")
   end
 end

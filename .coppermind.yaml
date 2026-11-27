@@ -5,3 +5,4 @@ paths:
   pkg/hooks: bonjoski/fabrial/hooks
   pkg/receipt: bonjoski/fabrial/receipt
   pkg/policy: bonjoski/fabrial/policy
+  pkg/topui: bonjoski/fabrial/topui
