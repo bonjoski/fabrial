@@ -61,7 +61,8 @@ type ExecutionOptions struct {
 	Airgap        bool
 	Net           bool
 	NoAttestation bool
-	Shield        bool
+	Halfshard     bool
+	Shield        bool // Deprecated alias for Halfshard.
 	Quiet         bool
 	DryRun        bool
 	Dir           string
@@ -224,8 +225,8 @@ func ParseArgs(args []string) (*ExecutionOptions, []string, error) {
 		case arg == "--no-attestation" || arg == "-no-attestation":
 			opts.NoAttestation = true
 
-		case arg == "--shield" || arg == "-shield":
-			opts.Shield = true
+		case arg == "--halfshard" || arg == "-halfshard" || arg == "--shield" || arg == "-shield":
+			opts.Halfshard = true
 
 		case arg == "--quiet" || arg == "-quiet" || arg == "-q":
 			opts.Quiet = true
@@ -480,41 +481,42 @@ func Route(opts *ExecutionOptions, cmdArgs []string) (*Decision, error) {
 		}
 	}
 
-	// 3-State Optional Pillar enforcement (Shield & Stormcage).
+	// 3-State Optional Pillar enforcement (Halfshard & Stormcage).
 	// State 3 (explicitly required in fabrial.yaml but missing on PATH) MUST fail closed (exit 126).
 	pillarResolver := opts.PillarResolver
 	if pillarResolver == nil {
 		pillarResolver = pillars.DefaultResolver()
 	}
 	pillarReq := pillars.RequirementsFromPolicy(pol)
-	shieldRes := pillarResolver.ResolveShield(pillarReq)
-	if shieldRes.State == pillars.StateRequiredMissing {
-		return nil, shieldRes.Err
+	halfshardRes := pillarResolver.ResolveHalfshard(pillarReq)
+	if halfshardRes.State == pillars.StateRequiredMissing {
+		return nil, halfshardRes.Err
 	}
 	stormcageRes := pillarResolver.ResolveStormcage(pillarReq)
 	if stormcageRes.State == pillars.StateRequiredMissing {
 		return nil, stormcageRes.Err
 	}
 
-	// Shield in-flight secret wire guard environment injection
-	shieldCfg := pol.GetShieldConfig()
-	shieldExplicit := opts.Shield || pol.RequireShield || (pol.Shield != nil && pol.Shield.Enabled)
-	shieldActive := shieldRes.IsActive()
-	shieldEnvOverride := os.Getenv("SHIELD_PROXY_ADDR") != ""
+	// Halfshard in-flight secret wire guard environment injection
+	halfshardCfg := pol.GetHalfshardConfig()
+	halfshardFlag := opts.Halfshard || opts.Shield
+	halfshardExplicit := halfshardFlag || pol.IsHalfshardRequired() || (pol.Halfshard != nil && pol.Halfshard.Enabled) || (pol.Shield != nil && pol.Shield.Enabled)
+	halfshardActive := halfshardRes.IsActive()
+	halfshardEnvOverride := os.Getenv("HALFSHARD_PROXY_ADDR") != "" || os.Getenv("SHIELD_PROXY_ADDR") != ""
 	var injectedEnv []string
-	if (shieldActive || shieldExplicit || shieldEnvOverride) && (opts.Net || opts.Shield || (shieldActive && shieldCfg.Enabled && shieldCfg.AutoInjectEnv && opts.Net)) {
-		if addr, ok := DetectShieldProxy(shieldCfg.ProxyAddr); ok {
+	if (halfshardActive || halfshardExplicit || halfshardEnvOverride) && (opts.Net || halfshardFlag || (halfshardActive && halfshardCfg.Enabled && halfshardCfg.AutoInjectEnv && opts.Net)) {
+		if addr, ok := DetectHalfshardProxy(halfshardCfg.ProxyAddr); ok {
 			injectedEnv = append(injectedEnv,
 				"HTTP_PROXY=http://"+addr,
 				"HTTPS_PROXY=http://"+addr,
 				"http_proxy=http://"+addr,
 				"https_proxy=http://"+addr,
-				"SOVEREIGN_SHIELD_ACTIVE=1",
+				"SOVEREIGN_HALFSHARD_ACTIVE=1",
 			)
-		} else if pol.RequireShield && (opts.Net || opts.Shield) {
-			return nil, pillars.NewRequiredUnhealthyError(pillars.Shield, "wire guard proxy offline (fail-closed)")
-		} else if (shieldExplicit || shieldActive) && shieldCfg.FailClosed && (opts.Net || opts.Shield) {
-			return nil, errors.New("Shield wire guard proxy offline and fail-closed is active; execution halted to prevent credential leakage")
+		} else if pol.IsHalfshardRequired() && (opts.Net || halfshardFlag) {
+			return nil, pillars.NewRequiredUnhealthyError(pillars.Halfshard, "wire guard proxy offline (fail-closed)")
+		} else if (halfshardExplicit || halfshardActive) && halfshardCfg.FailClosed && (opts.Net || halfshardFlag) {
+			return nil, errors.New("Halfshard wire guard proxy offline and fail-closed is active; execution halted to prevent credential leakage")
 		}
 	}
 
@@ -792,12 +794,15 @@ func isBuildCommand(cmdArgs []string) bool {
 	return false
 }
 
-// DetectShieldProxy checks if Shield local proxy is listening on preferred addrs, 127.0.0.1:8443, 127.0.0.1:8080, or SHIELD_PROXY_ADDR.
-func DetectShieldProxy(preferred ...string) (string, bool) {
-	if s := os.Getenv("SHIELD_PROXY_ADDR"); s != "" {
-		if conn, err := net.DialTimeout("tcp", s, 150*time.Millisecond); err == nil {
-			_ = conn.Close()
-			return s, true
+// DetectHalfshardProxy checks if Halfshard local proxy is listening on HALFSHARD_PROXY_ADDR
+// (with fallback to deprecated SHIELD_PROXY_ADDR), preferred addrs, 127.0.0.1:8443, or 127.0.0.1:8080.
+func DetectHalfshardProxy(preferred ...string) (string, bool) {
+	for _, envKey := range []string{"HALFSHARD_PROXY_ADDR", "SHIELD_PROXY_ADDR"} {
+		if s := os.Getenv(envKey); s != "" {
+			if conn, err := net.DialTimeout("tcp", s, 150*time.Millisecond); err == nil {
+				_ = conn.Close()
+				return s, true
+			}
 		}
 	}
 	var candidates []string
@@ -819,4 +824,9 @@ func DetectShieldProxy(preferred ...string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// DetectShieldProxy is a deprecated alias for DetectHalfshardProxy.
+func DetectShieldProxy(preferred ...string) (string, bool) {
+	return DetectHalfshardProxy(preferred...)
 }

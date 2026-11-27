@@ -38,7 +38,7 @@ func runTrust(args []string, storePath string, lookup pillars.LookupFunc, stdout
 			return 0
 		}
 		if len(names) == 0 {
-			fmt.Fprintln(stdout, "No pillar SHA-256 digests pinned yet. Run: fabrial trust pillar <shield|stormcage|...>")
+			fmt.Fprintln(stdout, "No pillar SHA-256 digests pinned yet. Run: fabrial trust pillar <halfshard|stormcage|...>")
 			return 0
 		}
 		fmt.Fprintf(stdout, "Trusted pillar SHA-256 pins (%s):\n", storePath)

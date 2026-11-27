@@ -96,7 +96,7 @@ func SuperEngineering(targetDir string) (*Result, error) {
 }
 
 // SuperEngineeringWithResolver integrates the Bonjoski security fabric into targetDir using
-// an injectable optional-pillar resolver for deterministic 3-State Shield discovery.
+// an injectable optional-pillar resolver for deterministic 3-State Halfshard discovery.
 func SuperEngineeringWithResolver(targetDir string, resolver *pillars.Resolver) (*Result, error) {
 	if targetDir == "" {
 		targetDir = "."
@@ -106,9 +106,9 @@ func SuperEngineeringWithResolver(targetDir string, resolver *pillars.Resolver) 
 	}
 
 	req, _ := pillars.LoadRequirements("", targetDir)
-	shieldRes := resolver.ResolveShield(req)
-	if shieldRes.State == pillars.StateRequiredMissing {
-		return nil, shieldRes.Err
+	halfshardRes := resolver.ResolveHalfshard(req)
+	if halfshardRes.State == pillars.StateRequiredMissing {
+		return nil, halfshardRes.Err
 	}
 
 	configDir := filepath.Join(targetDir, ".super.engineering")
@@ -153,8 +153,8 @@ func SuperEngineeringWithResolver(targetDir string, resolver *pillars.Resolver) 
 	}
 	rawMap["setup"] = setupList
 
-	// 2. Ensure run targets has "shield" ONLY when Shield is installed (State 2).
-	// In State 1 (not installed & not required), do not inject a dead "shield" run target.
+	// 2. Ensure run targets has "halfshard" ONLY when Halfshard is installed (State 2).
+	// In State 1 (not installed & not required), do not inject a dead "halfshard" run target.
 	var runList []map[string]interface{}
 	if existingRun, ok := rawMap["run"].([]interface{}); ok {
 		for _, item := range existingRun {
@@ -163,24 +163,24 @@ func SuperEngineeringWithResolver(targetDir string, resolver *pillars.Resolver) 
 			}
 		}
 	}
-	if shieldRes.IsActive() {
-		hasShield := false
+	if halfshardRes.IsActive() {
+		hasHalfshard := false
 		for _, r := range runList {
-			if name, ok := r["name"].(string); ok && name == "shield" {
-				hasShield = true
+			if name, ok := r["name"].(string); ok && name == "halfshard" {
+				hasHalfshard = true
 				break
 			}
 		}
-		if !hasShield {
-			shieldRun := map[string]interface{}{
-				"name": "shield",
+		if !hasHalfshard {
+			halfshardRun := map[string]interface{}{
+				"name": "halfshard",
 				"commands": []interface{}{
-					"shield proxy --addr 127.0.0.1:8443 --tls",
+					"halfshard proxy --addr 127.0.0.1:8443 --tls",
 				},
 				"default": false,
 			}
-			runList = append(runList, shieldRun)
-			result.RunAdded = append(result.RunAdded, "shield")
+			runList = append(runList, halfshardRun)
+			result.RunAdded = append(result.RunAdded, "halfshard")
 		}
 		rawMap["run"] = runList
 	} else if len(runList) > 0 {
@@ -448,14 +448,14 @@ func SuperEngineeringGlobal() (*Result, error) {
 	}
 
 	req, _ := pillars.LoadRequirements("", ".")
-	shieldRes := pillars.DefaultResolver().ResolveShield(req)
-	if shieldRes.State == pillars.StateRequiredMissing {
-		return nil, shieldRes.Err
+	halfshardRes := pillars.DefaultResolver().ResolveHalfshard(req)
+	if halfshardRes.State == pillars.StateRequiredMissing {
+		return nil, halfshardRes.Err
 	}
-	if shieldRes.IsActive() {
-		runCmd := exec.Command(scPath, "project", "scripts", "set", "run", "shield", "shield proxy --addr 127.0.0.1:8443 --tls", "--scope", "user")
+	if halfshardRes.IsActive() {
+		runCmd := exec.Command(scPath, "project", "scripts", "set", "run", "halfshard", "halfshard proxy --addr 127.0.0.1:8443 --tls", "--scope", "user")
 		if err := runCmd.Run(); err == nil {
-			result.RunAdded = append(result.RunAdded, "shield (user fallback)")
+			result.RunAdded = append(result.RunAdded, "halfshard (user fallback)")
 		}
 	}
 

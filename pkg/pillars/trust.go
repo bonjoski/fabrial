@@ -310,21 +310,54 @@ func ListTrustedPillars(storePath string) (*TrustStore, []string, error) {
 
 // expectedPinForPillar merges fabrial.yaml pillar_digests and the local trust store.
 // If BOTH specify a digest for the same pillar and they disagree, it fails closed.
+// For "halfshard", legacy "shield" pin keys are also inspected fail-closed so an existing
+// hardened fabrial.yaml or trust store never silently loses digest pinning.
 func expectedPinForPillar(name string, req Requirements, trustStorePath string) (string, bool, error) {
 	cleanName := strings.ToLower(strings.TrimSpace(name))
+	legacyAlias := ""
+	if cleanName == string(Halfshard) {
+		legacyAlias = "shield"
+	}
 
-	var policyPin string
-	var hasPolicyPin bool
-	for k, v := range req.PillarDigests {
-		if strings.EqualFold(strings.TrimSpace(k), cleanName) {
-			dig, err := NormalizeSHA256(v)
-			if err != nil {
-				return "", false, fmt.Errorf("fabrial.yaml pillar_digests.%s: %w", cleanName, err)
+	resolveMapPin := func(m map[string]string, sourceLabel string) (string, bool, error) {
+		var primaryPin, legacyPin string
+		var hasPrimary, hasLegacy bool
+		for k, v := range m {
+			ck := strings.ToLower(strings.TrimSpace(k))
+			if ck == cleanName {
+				dig, err := NormalizeSHA256(v)
+				if err != nil {
+					return "", false, fmt.Errorf("%s.%s: %w", sourceLabel, cleanName, err)
+				}
+				primaryPin = dig
+				hasPrimary = true
+			} else if legacyAlias != "" && ck == legacyAlias {
+				dig, err := NormalizeSHA256(v)
+				if err != nil {
+					return "", false, fmt.Errorf("%s.%s: %w", sourceLabel, legacyAlias, err)
+				}
+				legacyPin = dig
+				hasLegacy = true
 			}
-			policyPin = dig
-			hasPolicyPin = true
-			break
 		}
+		if hasPrimary && hasLegacy {
+			if subtle.ConstantTimeCompare([]byte(primaryPin), []byte(legacyPin)) != 1 {
+				return "", true, fmt.Errorf("conflicting SHA-256 pins for %s (%s) and legacy %s (%s) in %s", cleanName, primaryPin[:12], legacyAlias, legacyPin[:12], sourceLabel)
+			}
+			return primaryPin, true, nil
+		}
+		if hasPrimary {
+			return primaryPin, true, nil
+		}
+		if hasLegacy {
+			return legacyPin, true, nil
+		}
+		return "", false, nil
+	}
+
+	policyPin, hasPolicyPin, err := resolveMapPin(req.PillarDigests, "fabrial.yaml pillar_digests")
+	if err != nil {
+		return "", false, err
 	}
 
 	var storePin string
@@ -334,9 +367,9 @@ func expectedPinForPillar(name string, req Requirements, trustStorePath string) 
 		if err != nil {
 			return "", false, err
 		}
-		if v, ok := ts.Digests[cleanName]; ok && v != "" {
-			storePin = v
-			hasStorePin = true
+		storePin, hasStorePin, err = resolveMapPin(ts.Digests, "trust store")
+		if err != nil {
+			return "", false, err
 		}
 	}
 

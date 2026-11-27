@@ -219,7 +219,7 @@ attestation:
   targets:
     - "go build*"
     - "cargo build*"
-shield:
+halfshard:
   enabled: true
   proxy_addr: "127.0.0.1:8443"
   auto_inject_env: true
@@ -254,32 +254,41 @@ supply_chain:
 		t.Errorf("expected eslint NOT to trigger ShouldAttest")
 	}
 
-	sc := p.GetShieldConfig()
+	sc := p.GetHalfshardConfig()
 	if !sc.Enabled || sc.ProxyAddr != "127.0.0.1:8443" {
-		t.Errorf("unexpected shield config: %+v", sc)
+		t.Errorf("unexpected halfshard config: %+v", sc)
 	}
 }
 
 func TestPolicy_RequireOptionalPillarsDefaultsAndParsing(t *testing.T) {
 	// DefaultPolicy must leave optional private pillars unrequired (false)
 	def := DefaultPolicy()
-	if def.IsShieldRequired() || def.IsStormcageRequired() {
-		t.Fatalf("expected DefaultPolicy require_shield and require_stormcage to default to false")
+	if def.IsHalfshardRequired() || def.IsStormcageRequired() {
+		t.Fatalf("expected DefaultPolicy require_halfshard and require_stormcage to default to false")
 	}
 
 	var empty Policy
 	if err := yaml.Unmarshal([]byte("version: \"1\"\nname: \"public\"\n"), &empty); err != nil {
 		t.Fatalf("unmarshal empty: %v", err)
 	}
-	if empty.IsShieldRequired() || empty.IsStormcageRequired() {
-		t.Fatalf("expected omitted require_shield/require_stormcage to default to false")
+	if empty.IsHalfshardRequired() || empty.IsStormcageRequired() {
+		t.Fatalf("expected omitted require_halfshard/require_stormcage to default to false")
 	}
 
 	var strict Policy
-	if err := yaml.Unmarshal([]byte("version: \"1\"\nrequire_shield: true\nrequire_stormcage: true\n"), &strict); err != nil {
+	if err := yaml.Unmarshal([]byte("version: \"1\"\nrequire_halfshard: true\nrequire_stormcage: true\n"), &strict); err != nil {
 		t.Fatalf("unmarshal strict: %v", err)
 	}
-	if !strict.IsShieldRequired() || !strict.IsStormcageRequired() {
-		t.Fatalf("expected explicit require_shield and require_stormcage to be true, got %+v", strict)
+	if !strict.IsHalfshardRequired() || !strict.IsStormcageRequired() {
+		t.Fatalf("expected explicit require_halfshard and require_stormcage to be true, got %+v", strict)
+	}
+
+	// Backward-compatible monotonic fail-closed alias: legacy require_shield: true MUST still require Halfshard.
+	var legacy Policy
+	if err := yaml.Unmarshal([]byte("version: \"1\"\nrequire_shield: true\n"), &legacy); err != nil {
+		t.Fatalf("unmarshal legacy: %v", err)
+	}
+	if !legacy.IsHalfshardRequired() {
+		t.Fatalf("FAIL-OPEN: legacy require_shield: true did not set IsHalfshardRequired()=true")
 	}
 }

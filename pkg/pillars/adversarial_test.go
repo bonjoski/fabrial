@@ -13,7 +13,7 @@ import (
 )
 
 // TestAdversarial_ShellScriptTrojanRejected verifies Layer 1 (zero-execution debug/buildinfo):
-// an executable 0755 shell script named `shield` or `stormcage` on PATH MUST NEVER be treated
+// an executable 0755 shell script named `halfshard` or `stormcage` on PATH MUST NEVER be treated
 // as our application or executed.
 func TestAdversarial_ShellScriptTrojanRejected(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -21,7 +21,7 @@ func TestAdversarial_ShellScriptTrojanRejected(t *testing.T) {
 	}
 
 	binDir := t.TempDir()
-	for _, name := range []string{"shield", "stormcage"} {
+	for _, name := range []string{"halfshard", "stormcage"} {
 		p := filepath.Join(binDir, name)
 		if err := os.WriteFile(p, []byte("#!/bin/sh\necho PWNED\nexit 0\n"), 0755); err != nil {
 			t.Fatalf("write trojan script %s: %v", name, err)
@@ -30,33 +30,33 @@ func TestAdversarial_ShellScriptTrojanRejected(t *testing.T) {
 
 	r := &Resolver{Lookup: LookupInPATH(binDir), DisableTrustStore: true}
 
-	if res := r.ResolveShield(Requirements{}); res.State != StateAbsent {
-		t.Fatalf("FAIL-OPEN: 0755 shell script trojan named shield accepted as %s", res.State)
+	if res := r.ResolveHalfshard(Requirements{}); res.State != StateAbsent {
+		t.Fatalf("FAIL-OPEN: 0755 shell script trojan named halfshard accepted as %s", res.State)
 	}
 	if res := r.ResolveStormcage(Requirements{}); res.State != StateAbsent {
 		t.Fatalf("FAIL-OPEN: 0755 shell script trojan named stormcage accepted as %s", res.State)
 	}
-	if res := r.ResolveShield(Requirements{RequireShield: true}); res.State != StateRequiredMissing {
-		t.Fatalf("FAIL-OPEN: required shield accepted 0755 shell script trojan: %s", res.State)
+	if res := r.ResolveHalfshard(Requirements{RequireHalfshard: true}); res.State != StateRequiredMissing {
+		t.Fatalf("FAIL-OPEN: required halfshard accepted 0755 shell script trojan: %s", res.State)
 	}
 }
 
 // TestAdversarial_ThirdPartyGoBinaryCollisionRejected verifies Layer 1 defeats benign name
-// collisions (e.g. Stark & Wayne Cloud Foundry `shield` CLI or any unrelated Go binary named `shield`).
+// collisions with any unrelated third-party Go binary named `halfshard`.
 func TestAdversarial_ThirdPartyGoBinaryCollisionRejected(t *testing.T) {
 	ensureCompiledFixtures(t)
 
 	binDir := t.TempDir()
-	installFixtureCopy(t, evilCollisionBin, binDir, "shield")
+	installFixtureCopy(t, evilCollisionBin, binDir, "halfshard")
 
 	r := &Resolver{Lookup: LookupInPATH(binDir), DisableTrustStore: true}
 
-	if res := r.ResolveShield(Requirements{}); res.State != StateAbsent {
-		t.Fatalf("FAIL-OPEN: unrelated Go binary (github.com/evil/shield) accepted as %s", res.State)
+	if res := r.ResolveHalfshard(Requirements{}); res.State != StateAbsent {
+		t.Fatalf("FAIL-OPEN: unrelated Go binary (github.com/evil/halfshard) accepted as %s", res.State)
 	}
-	res := r.ResolveShield(Requirements{RequireShield: true})
+	res := r.ResolveHalfshard(Requirements{RequireHalfshard: true})
 	if res.State != StateRequiredMissing {
-		t.Fatalf("FAIL-OPEN: required shield accepted colliding third-party Go binary: %s", res.State)
+		t.Fatalf("FAIL-OPEN: required halfshard accepted colliding third-party Go binary: %s", res.State)
 	}
 	var ffe *ux.FixForwardError
 	if !errors.As(res.Err, &ffe) || ffe.ExitCode != ExitCodeRequiredMissing {
@@ -66,28 +66,28 @@ func TestAdversarial_ThirdPartyGoBinaryCollisionRejected(t *testing.T) {
 
 // TestAdversarial_ForgedModuleDigestMismatchFailsClosed verifies Layer 3 cryptographic SHA-256
 // pinning defeats an active adversary who compiles a forged Go binary declaring
-// `module github.com/bonjoski/shield`!
+// `module github.com/bonjoski/halfshard`!
 func TestAdversarial_ForgedModuleDigestMismatchFailsClosed(t *testing.T) {
 	ensureCompiledFixtures(t)
 
 	// 1. Pin the genuine binary's SHA-256 in the trust store.
 	genuineDir := t.TempDir()
-	installFixtureCopy(t, genuineShieldBin, genuineDir, "shield")
+	installFixtureCopy(t, genuineHalfshardBin, genuineDir, "halfshard")
 	storePath := filepath.Join(t.TempDir(), ".fabrial", "trusted-pillars.json")
 
-	pinned, err := TrustPillar("shield", storePath, LookupInPATH(genuineDir))
+	pinned, err := TrustPillar("halfshard", storePath, LookupInPATH(genuineDir))
 	if err != nil {
-		t.Fatalf("TrustPillar genuine shield: %v", err)
+		t.Fatalf("TrustPillar genuine halfshard: %v", err)
 	}
 
-	// 2. Attacker swaps the binary with a forged Go binary claiming module github.com/bonjoski/shield.
+	// 2. Attacker swaps the binary with a forged Go binary claiming module github.com/bonjoski/halfshard.
 	forgedDir := t.TempDir()
-	installFixtureCopy(t, forgedShieldBin, forgedDir, "shield")
+	installFixtureCopy(t, forgedHalfshardBin, forgedDir, "halfshard")
 
 	r := &Resolver{Lookup: LookupInPATH(forgedDir), TrustStorePath: storePath}
 
-	// Even when RequireShield is false, a pinned binary whose SHA-256 mismatches MUST FAIL CLOSED!
-	res := r.ResolveShield(Requirements{RequireShield: false})
+	// Even when RequireHalfshard is false, a pinned binary whose SHA-256 mismatches MUST FAIL CLOSED!
+	res := r.ResolveHalfshard(Requirements{RequireHalfshard: false})
 	if res.State != StateRequiredMissing || res.Err == nil {
 		t.Fatalf("FAIL-OPEN: forged Go binary with mismatched SHA-256 was not blocked (state=%s err=%v)", res.State, res.Err)
 	}
@@ -97,17 +97,25 @@ func TestAdversarial_ForgedModuleDigestMismatchFailsClosed(t *testing.T) {
 	}
 
 	// Also verify EnforceRequired catches the forged binary immediately.
-	if err := r.EnforceRequired(Requirements{RequireShield: false}); err == nil {
+	if err := r.EnforceRequired(Requirements{RequireHalfshard: false}); err == nil {
 		t.Fatal("FAIL-OPEN: EnforceRequired allowed forged Go binary with digest mismatch")
 	}
 
 	// Also verify fabrial.yaml pillar_digests catches the forged binary even without trust store.
 	rPolicy := &Resolver{Lookup: LookupInPATH(forgedDir), DisableTrustStore: true}
-	resPolicy := rPolicy.ResolveShield(Requirements{
-		PillarDigests: map[string]string{"shield": pinned.SHA256},
+	resPolicy := rPolicy.ResolveHalfshard(Requirements{
+		PillarDigests: map[string]string{"halfshard": pinned.SHA256},
 	})
 	if resPolicy.State != StateRequiredMissing || resPolicy.Err == nil {
 		t.Fatalf("FAIL-OPEN: fabrial.yaml pillar_digests did not reject forged binary: %+v", resPolicy)
+	}
+
+	// Also verify legacy fabrial.yaml pillar_digests.shield key fails closed on mismatch!
+	resLegacyPin := rPolicy.ResolveHalfshard(Requirements{
+		PillarDigests: map[string]string{"shield": strings.Repeat("c", 64)},
+	})
+	if resLegacyPin.State != StateRequiredMissing || resLegacyPin.Err == nil {
+		t.Fatalf("FAIL-OPEN: legacy pillar_digests.shield mismatch did not fail closed: %+v", resLegacyPin)
 	}
 }
 
@@ -117,17 +125,17 @@ func TestAdversarial_StrictPillarPinningRejectsUnpinnedForgedBinary(t *testing.T
 	ensureCompiledFixtures(t)
 
 	binDir := t.TempDir()
-	installFixtureCopy(t, forgedShieldBin, binDir, "shield")
+	installFixtureCopy(t, forgedHalfshardBin, binDir, "halfshard")
 
 	r := &Resolver{Lookup: LookupInPATH(binDir), DisableTrustStore: true}
 
 	// Optional + strict_pillar_pinning: never auto-loads unpinned binary.
-	if res := r.ResolveShield(Requirements{StrictPillarPinning: true}); res.State != StateAbsent {
+	if res := r.ResolveHalfshard(Requirements{StrictPillarPinning: true}); res.State != StateAbsent {
 		t.Fatalf("FAIL-OPEN: strict_pillar_pinning auto-loaded unpinned binary as %s", res.State)
 	}
 
 	// Required + strict_pillar_pinning: fails closed exit 126 with FABRIAL_PILLAR_UNPINNED.
-	res := r.ResolveShield(Requirements{RequireShield: true, StrictPillarPinning: true})
+	res := r.ResolveHalfshard(Requirements{RequireHalfshard: true, StrictPillarPinning: true})
 	if res.State != StateRequiredMissing || res.Err == nil {
 		t.Fatalf("FAIL-OPEN: required+strict_pillar_pinning allowed unpinned binary: %+v", res)
 	}
@@ -138,24 +146,37 @@ func TestAdversarial_StrictPillarPinningRejectsUnpinnedForgedBinary(t *testing.T
 }
 
 // TestAdversarial_ConflictingPolicyAndTrustStorePinsFailClosed ensures disagreement between
-// fabrial.yaml pillar_digests and ~/.fabrial/trusted-pillars.json fails closed.
+// fabrial.yaml pillar_digests and ~/.fabrial/trusted-pillars.json (or conflicting halfshard/shield keys) fails closed.
 func TestAdversarial_ConflictingPolicyAndTrustStorePinsFailClosed(t *testing.T) {
 	ensureCompiledFixtures(t)
 
 	binDir := t.TempDir()
-	installFixtureCopy(t, genuineShieldBin, binDir, "shield")
+	installFixtureCopy(t, genuineHalfshardBin, binDir, "halfshard")
 	storePath := filepath.Join(t.TempDir(), ".fabrial", "trusted-pillars.json")
 
-	if _, err := TrustPillar("shield", storePath, LookupInPATH(binDir)); err != nil {
+	pinned, err := TrustPillar("halfshard", storePath, LookupInPATH(binDir))
+	if err != nil {
 		t.Fatalf("TrustPillar failed: %v", err)
 	}
 
 	r := &Resolver{Lookup: LookupInPATH(binDir), TrustStorePath: storePath}
-	res := r.ResolveShield(Requirements{
-		PillarDigests: map[string]string{"shield": strings.Repeat("b", 64)},
+	res := r.ResolveHalfshard(Requirements{
+		PillarDigests: map[string]string{"halfshard": strings.Repeat("b", 64)},
 	})
 	if res.State != StateRequiredMissing || res.Err == nil {
 		t.Fatalf("FAIL-OPEN: conflicting pins between policy and trust store did not fail closed: %+v", res)
+	}
+
+	// Conflicting halfshard vs legacy shield keys within pillar_digests must also fail closed.
+	rNoStore := &Resolver{Lookup: LookupInPATH(binDir), DisableTrustStore: true}
+	resConflict := rNoStore.ResolveHalfshard(Requirements{
+		PillarDigests: map[string]string{
+			"halfshard": pinned.SHA256,
+			"shield":    strings.Repeat("d", 64),
+		},
+	})
+	if resConflict.State != StateRequiredMissing || resConflict.Err == nil {
+		t.Fatalf("FAIL-OPEN: conflicting halfshard and legacy shield pins in pillar_digests did not fail closed: %+v", resConflict)
 	}
 }
 
@@ -197,17 +218,17 @@ func TestAdversarial_RegularFileInWorldWritableDirRejected(t *testing.T) {
 	ensureCompiledFixtures(t)
 
 	worldDir := t.TempDir()
-	installFixtureCopy(t, genuineShieldBin, worldDir, "shield")
+	installFixtureCopy(t, genuineHalfshardBin, worldDir, "halfshard")
 	if err := os.Chmod(worldDir, 0777); err != nil {
 		t.Fatalf("chmod worldDir: %v", err)
 	}
 
 	r := &Resolver{Lookup: LookupInPATH(worldDir), DisableTrustStore: true}
-	if res := r.ResolveShield(Requirements{}); res.State != StateAbsent {
+	if res := r.ResolveHalfshard(Requirements{}); res.State != StateAbsent {
 		t.Fatalf("FAIL-OPEN: regular binary inside 0777 world-writable dir accepted as %s", res.State)
 	}
-	if res := r.ResolveShield(Requirements{RequireShield: true}); res.State != StateRequiredMissing {
-		t.Fatalf("FAIL-OPEN: required shield accepted regular binary in 0777 dir: %s", res.State)
+	if res := r.ResolveHalfshard(Requirements{RequireHalfshard: true}); res.State != StateRequiredMissing {
+		t.Fatalf("FAIL-OPEN: required halfshard accepted regular binary in 0777 dir: %s", res.State)
 	}
 }
 
@@ -218,22 +239,22 @@ func TestAdversarial_NonExecutableFileNotTreatedAsInstalled(t *testing.T) {
 	ensureCompiledFixtures(t)
 
 	binDir := t.TempDir()
-	shieldPath := installFixtureCopy(t, genuineShieldBin, binDir, "shield")
+	hsPath := installFixtureCopy(t, genuineHalfshardBin, binDir, "halfshard")
 	stormPath := installFixtureCopy(t, genuineStormBin, binDir, "stormcage")
-	_ = os.Chmod(shieldPath, 0644)
+	_ = os.Chmod(hsPath, 0644)
 	_ = os.Chmod(stormPath, 0644)
 
 	r := &Resolver{Lookup: LookupInPATH(binDir), DisableTrustStore: true}
 
-	if res := r.ResolveShield(Requirements{}); res.State != StateAbsent {
-		t.Fatalf("FAIL-OPEN: non-executable shield treated as %s", res.State)
+	if res := r.ResolveHalfshard(Requirements{}); res.State != StateAbsent {
+		t.Fatalf("FAIL-OPEN: non-executable halfshard treated as %s", res.State)
 	}
 	if res := r.ResolveStormcage(Requirements{}); res.State != StateAbsent {
 		t.Fatalf("FAIL-OPEN: non-executable stormcage treated as %s", res.State)
 	}
-	res := r.ResolveShield(Requirements{RequireShield: true})
+	res := r.ResolveHalfshard(Requirements{RequireHalfshard: true})
 	if res.State != StateRequiredMissing {
-		t.Fatalf("FAIL-OPEN: required non-executable shield returned %s", res.State)
+		t.Fatalf("FAIL-OPEN: required non-executable halfshard returned %s", res.State)
 	}
 	var ffe *ux.FixForwardError
 	if !errors.As(res.Err, &ffe) || ffe.ExitCode != ExitCodeRequiredMissing {
@@ -254,7 +275,7 @@ func TestAdversarial_SymlinkAttacksRejected(t *testing.T) {
 		{
 			name: "DanglingSymlink",
 			setup: func(t *testing.T, binDir string) {
-				if err := os.Symlink("/nonexistent/path/shield", filepath.Join(binDir, "shield")); err != nil {
+				if err := os.Symlink("/nonexistent/path/halfshard", filepath.Join(binDir, "halfshard")); err != nil {
 					t.Fatalf("symlink: %v", err)
 				}
 			},
@@ -262,7 +283,7 @@ func TestAdversarial_SymlinkAttacksRejected(t *testing.T) {
 		{
 			name: "SymlinkToUnrelatedBinaryDecoy",
 			setup: func(t *testing.T, binDir string) {
-				if err := os.Symlink("/bin/sh", filepath.Join(binDir, "shield")); err != nil {
+				if err := os.Symlink("/bin/sh", filepath.Join(binDir, "halfshard")); err != nil {
 					t.Fatalf("symlink: %v", err)
 				}
 			},
@@ -270,10 +291,10 @@ func TestAdversarial_SymlinkAttacksRejected(t *testing.T) {
 		{
 			name: "SymlinkToDifferentBonjoskiBinaryDecoy",
 			setup: func(t *testing.T, binDir string) {
-				// Point `shield` symlink to genuine `stormcage` binary
+				// Point `halfshard` symlink to genuine `stormcage` binary
 				targetDir := t.TempDir()
 				target := installFixtureCopy(t, genuineStormBin, targetDir, "stormcage")
-				if err := os.Symlink(target, filepath.Join(binDir, "shield")); err != nil {
+				if err := os.Symlink(target, filepath.Join(binDir, "halfshard")); err != nil {
 					t.Fatalf("symlink: %v", err)
 				}
 			},
@@ -282,9 +303,9 @@ func TestAdversarial_SymlinkAttacksRejected(t *testing.T) {
 			name: "SymlinkToNonExecutableFile",
 			setup: func(t *testing.T, binDir string) {
 				targetDir := t.TempDir()
-				target := installFixtureCopy(t, genuineShieldBin, targetDir, "shield")
+				target := installFixtureCopy(t, genuineHalfshardBin, targetDir, "halfshard")
 				_ = os.Chmod(target, 0644)
-				if err := os.Symlink(target, filepath.Join(binDir, "shield")); err != nil {
+				if err := os.Symlink(target, filepath.Join(binDir, "halfshard")); err != nil {
 					t.Fatalf("symlink: %v", err)
 				}
 			},
@@ -292,11 +313,11 @@ func TestAdversarial_SymlinkAttacksRejected(t *testing.T) {
 		{
 			name: "SymlinkToDirectory",
 			setup: func(t *testing.T, binDir string) {
-				targetDir := filepath.Join(t.TempDir(), "shield")
+				targetDir := filepath.Join(t.TempDir(), "halfshard")
 				if err := os.MkdirAll(targetDir, 0755); err != nil {
 					t.Fatalf("mkdir: %v", err)
 				}
-				if err := os.Symlink(targetDir, filepath.Join(binDir, "shield")); err != nil {
+				if err := os.Symlink(targetDir, filepath.Join(binDir, "halfshard")); err != nil {
 					t.Fatalf("symlink: %v", err)
 				}
 			},
@@ -305,9 +326,9 @@ func TestAdversarial_SymlinkAttacksRejected(t *testing.T) {
 			name: "SymlinkToWorldWritableTarget",
 			setup: func(t *testing.T, binDir string) {
 				targetDir := t.TempDir()
-				target := installFixtureCopy(t, genuineShieldBin, targetDir, "shield")
+				target := installFixtureCopy(t, genuineHalfshardBin, targetDir, "halfshard")
 				_ = os.Chmod(target, 0777)
-				if err := os.Symlink(target, filepath.Join(binDir, "shield")); err != nil {
+				if err := os.Symlink(target, filepath.Join(binDir, "halfshard")); err != nil {
 					t.Fatalf("symlink: %v", err)
 				}
 			},
@@ -316,11 +337,11 @@ func TestAdversarial_SymlinkAttacksRejected(t *testing.T) {
 			name: "SymlinkToTargetInWorldWritableDir",
 			setup: func(t *testing.T, binDir string) {
 				worldDir := t.TempDir()
-				target := installFixtureCopy(t, genuineShieldBin, worldDir, "shield")
+				target := installFixtureCopy(t, genuineHalfshardBin, worldDir, "halfshard")
 				if err := os.Chmod(worldDir, 0777); err != nil {
 					t.Fatalf("chmod worldDir: %v", err)
 				}
-				if err := os.Symlink(target, filepath.Join(binDir, "shield")); err != nil {
+				if err := os.Symlink(target, filepath.Join(binDir, "halfshard")); err != nil {
 					t.Fatalf("symlink: %v", err)
 				}
 			},
@@ -333,10 +354,10 @@ func TestAdversarial_SymlinkAttacksRejected(t *testing.T) {
 			tc.setup(t, binDir)
 			r := &Resolver{Lookup: LookupInPATH(binDir), DisableTrustStore: true}
 
-			if res := r.ResolveShield(Requirements{}); res.State != StateAbsent {
+			if res := r.ResolveHalfshard(Requirements{}); res.State != StateAbsent {
 				t.Fatalf("FAIL-OPEN (%s): treated untrusted symlink as %s", tc.name, res.State)
 			}
-			if res := r.ResolveShield(Requirements{RequireShield: true}); res.State != StateRequiredMissing {
+			if res := r.ResolveHalfshard(Requirements{RequireHalfshard: true}); res.State != StateRequiredMissing {
 				t.Fatalf("FAIL-OPEN (%s): required untrusted symlink did not fail closed (got %s)", tc.name, res.State)
 			}
 		})
@@ -353,7 +374,7 @@ func TestAdversarial_HomebrewStyleCellarSymlinkAcceptedAndCanonicalized(t *testi
 	ensureCompiledFixtures(t)
 
 	root := t.TempDir()
-	cellarBin := filepath.Join(root, "Cellar", "shield", "0.4.0", "bin")
+	cellarBin := filepath.Join(root, "Cellar", "halfshard", "0.4.0", "bin")
 	linkBin := filepath.Join(root, "bin")
 	if err := os.MkdirAll(cellarBin, 0755); err != nil {
 		t.Fatalf("mkdir cellar: %v", err)
@@ -362,14 +383,14 @@ func TestAdversarial_HomebrewStyleCellarSymlinkAcceptedAndCanonicalized(t *testi
 		t.Fatalf("mkdir bin: %v", err)
 	}
 
-	realBin := installFixtureCopy(t, genuineShieldBin, cellarBin, "shield")
-	linkPath := filepath.Join(linkBin, "shield")
-	if err := os.Symlink(filepath.Join("..", "Cellar", "shield", "0.4.0", "bin", "shield"), linkPath); err != nil {
+	realBin := installFixtureCopy(t, genuineHalfshardBin, cellarBin, "halfshard")
+	linkPath := filepath.Join(linkBin, "halfshard")
+	if err := os.Symlink(filepath.Join("..", "Cellar", "halfshard", "0.4.0", "bin", "halfshard"), linkPath); err != nil {
 		t.Fatalf("create homebrew-style symlink: %v", err)
 	}
 
 	r := &Resolver{Lookup: LookupInPATH(linkBin), DisableTrustStore: true}
-	res := r.ResolveShield(Requirements{})
+	res := r.ResolveHalfshard(Requirements{})
 	if res.State != StateInstalled {
 		t.Fatalf("expected legitimate Homebrew-style symlink to resolve as StateInstalled, got %s (err=%v)", res.State, res.Err)
 	}
@@ -386,36 +407,36 @@ func TestAdversarial_WorldWritableBinaryAndRelativePATHRejected(t *testing.T) {
 
 	// 1. World-writable binary
 	binDir := t.TempDir()
-	ww := installFixtureCopy(t, genuineShieldBin, binDir, "shield")
+	ww := installFixtureCopy(t, genuineHalfshardBin, binDir, "halfshard")
 	_ = os.Chmod(ww, 0777)
 
 	r := &Resolver{Lookup: LookupInPATH(binDir), DisableTrustStore: true}
-	if res := r.ResolveShield(Requirements{}); res.State != StateAbsent {
-		t.Fatalf("FAIL-OPEN: world-writable shield accepted as %s", res.State)
+	if res := r.ResolveHalfshard(Requirements{}); res.State != StateAbsent {
+		t.Fatalf("FAIL-OPEN: world-writable halfshard accepted as %s", res.State)
 	}
 
-	// 2. Directory named shield
+	// 2. Directory named halfshard
 	dirTrap := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dirTrap, "shield"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(dirTrap, "halfshard"), 0755); err != nil {
 		t.Fatalf("mkdir trap: %v", err)
 	}
 	rDir := &Resolver{Lookup: LookupInPATH(dirTrap), DisableTrustStore: true}
-	if res := rDir.ResolveShield(Requirements{}); res.State != StateAbsent {
-		t.Fatalf("FAIL-OPEN: directory named shield accepted as %s", res.State)
+	if res := rDir.ResolveHalfshard(Requirements{}); res.State != StateAbsent {
+		t.Fatalf("FAIL-OPEN: directory named halfshard accepted as %s", res.State)
 	}
 
 	// 3. Relative PATH entry "."
 	relDir := t.TempDir()
-	installFixtureCopy(t, genuineShieldBin, relDir, "shield")
+	installFixtureCopy(t, genuineHalfshardBin, relDir, "halfshard")
 	t.Chdir(relDir)
 	rRel := &Resolver{Lookup: LookupInPATH(".:./bin"), DisableTrustStore: true}
-	if res := rRel.ResolveShield(Requirements{}); res.State != StateAbsent {
-		t.Fatalf("FAIL-OPEN: relative PATH entry resolved shield as %s", res.State)
+	if res := rRel.ResolveHalfshard(Requirements{}); res.State != StateAbsent {
+		t.Fatalf("FAIL-OPEN: relative PATH entry resolved halfshard as %s", res.State)
 	}
 
 	// 4. Path traversal in lookup name
 	lookup := LookupInPATH(relDir)
-	for _, bad := range []string{"", ".", "..", "../shield", "/bin/sh", "shield\x00"} {
+	for _, bad := range []string{"", ".", "..", "../halfshard", "/bin/sh", "halfshard\x00"} {
 		if _, err := lookup(bad); err == nil {
 			t.Fatalf("FAIL-OPEN: LookupInPATH accepted invalid binary name %q", bad)
 		}
@@ -425,10 +446,10 @@ func TestAdversarial_WorldWritableBinaryAndRelativePATHRejected(t *testing.T) {
 func TestAdversarial_ConcurrentEightSubagentResolution(t *testing.T) {
 	ensureCompiledFixtures(t)
 	binDir := t.TempDir()
-	installFixtureCopy(t, genuineShieldBin, binDir, "shield")
+	installFixtureCopy(t, genuineHalfshardBin, binDir, "halfshard")
 	storePath := filepath.Join(t.TempDir(), ".fabrial", "trusted-pillars.json")
 
-	if _, err := TrustPillar("shield", storePath, LookupInPATH(binDir)); err != nil {
+	if _, err := TrustPillar("halfshard", storePath, LookupInPATH(binDir)); err != nil {
 		t.Fatalf("TrustPillar failed: %v", err)
 	}
 
@@ -441,9 +462,9 @@ func TestAdversarial_ConcurrentEightSubagentResolution(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			res := &Resolver{Lookup: LookupInPATH(binDir), TrustStorePath: storePath}
-			s := res.ResolveShield(Requirements{RequireShield: true, StrictPillarPinning: true})
+			s := res.ResolveHalfshard(Requirements{RequireHalfshard: true, StrictPillarPinning: true})
 			if s.State != StateInstalled {
-				errs <- errors.New("expected Shield StateInstalled under concurrency")
+				errs <- errors.New("expected Halfshard StateInstalled under concurrency")
 				return
 			}
 			sc := res.ResolveStormcage(Requirements{RequireStormcage: false})

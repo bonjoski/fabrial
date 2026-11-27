@@ -19,9 +19,9 @@ type BinaryIdentity struct {
 // knownBonjoskiBinaries maps canonical bonjoski CLI/daemon binary names to their
 // authoritative Go module paths. Reading debug/buildinfo never executes the binary.
 var knownBonjoskiBinaries = map[string]BinaryIdentity{
-	"shield": {
-		BinaryName:     "shield",
-		AllowedModules: []string{"github.com/bonjoski/shield"},
+	"halfshard": {
+		BinaryName:     "halfshard",
+		AllowedModules: []string{"github.com/bonjoski/halfshard"},
 	},
 	"stormcage": {
 		BinaryName:     "stormcage",
@@ -83,8 +83,8 @@ func KnownBinaryIdentity(name string) (BinaryIdentity, bool) {
 // the binary, asserting that its embedded Main.Path and package Path match the authoritative
 // bonjoski module for expectedName.
 //
-// This eliminates benign name collisions (e.g. third-party tools named `shield`), shell scripts,
-// and non-bonjoski binaries in <0.4ms with zero subprocess execution.
+// This eliminates benign name collisions (e.g. unrelated third-party binaries sharing a CLI name),
+// shell scripts, and non-bonjoski binaries in <0.4ms with zero subprocess execution.
 func VerifyGoBuildInfo(resolvedPath, expectedName string) (string, error) {
 	ident, known := KnownBinaryIdentity(expectedName)
 	if !known {

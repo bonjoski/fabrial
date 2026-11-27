@@ -25,7 +25,7 @@ func createFakeDaemonBin(t *testing.T, dir, name string) {
 }
 
 func TestSupervisor_DefaultServicesDefined(t *testing.T) {
-	// State 1: Neither Shield nor Stormcage installed & unrequired -> only 3 core daemons
+	// State 1: Neither Halfshard nor Stormcage installed & unrequired -> only 3 core daemons
 	emptyBin := t.TempDir()
 	supState1 := NewSupervisor(&pillars.Resolver{Lookup: pillars.LookupInPATH(emptyBin)}, pillars.Requirements{})
 	if len(supState1.Services) != 3 {
@@ -37,17 +37,17 @@ func TestSupervisor_DefaultServicesDefined(t *testing.T) {
 			t.Errorf("State 1 at index %d: expected %s, got %s", i, name, supState1.Services[i].Name)
 		}
 	}
-	if _, ok := supState1.GetService("Shield"); ok {
-		t.Fatalf("State 1: Shield service must not be registered when absent & unrequired")
+	if _, ok := supState1.GetService("Halfshard"); ok {
+		t.Fatalf("State 1: Halfshard service must not be registered when absent & unrequired")
 	}
 	if _, ok := supState1.GetService("Stormcage"); ok {
 		t.Fatalf("State 1: Stormcage service must not be registered when absent & unrequired")
 	}
 
-	// State 2: Both Shield and Stormcage installed -> all 5 daemons registered
+	// State 2: Both Halfshard and Stormcage installed -> all 5 daemons registered
 	supState2 := NewSupervisor(&pillars.Resolver{
 		Lookup: pillars.StaticLookup(map[string]string{
-			"shield":    "/opt/homebrew/Cellar/shield/0.4.0/bin/shield",
+			"halfshard": "/opt/homebrew/Cellar/halfshard/0.4.0/bin/halfshard",
 			"stormcage": "/opt/homebrew/Cellar/stormcage/0.4.0/bin/stormcage",
 		}),
 		DisableTrustStore: true,
@@ -55,22 +55,22 @@ func TestSupervisor_DefaultServicesDefined(t *testing.T) {
 	if len(supState2.Services) != 5 {
 		t.Fatalf("State 2: expected 5 daemons, got %d", len(supState2.Services))
 	}
-	allNames := []string{"Locksmith", "Argus", "Aegisbox", "Shield", "Stormcage"}
+	allNames := []string{"Locksmith", "Argus", "Aegisbox", "Halfshard", "Stormcage"}
 	for i, name := range allNames {
 		if supState2.Services[i].Name != name {
 			t.Errorf("State 2 at index %d: expected %s, got %s", i, name, supState2.Services[i].Name)
 		}
 	}
 
-	// State 3: require_shield: true with missing binary -> Shield registered as Required and Start fails closed (exit 126)
-	supState3 := NewSupervisor(&pillars.Resolver{Lookup: pillars.LookupInPATH(emptyBin)}, pillars.Requirements{RequireShield: true})
-	def, ok := supState3.GetService("Shield")
+	// State 3: require_halfshard: true with missing binary -> Halfshard registered as Required and Start fails closed (exit 126)
+	supState3 := NewSupervisor(&pillars.Resolver{Lookup: pillars.LookupInPATH(emptyBin)}, pillars.Requirements{RequireHalfshard: true})
+	def, ok := supState3.GetService("Halfshard")
 	if !ok || !def.Required {
-		t.Fatalf("State 3: expected Shield registered with Required=true, got ok=%v def=%+v", ok, def)
+		t.Fatalf("State 3: expected Halfshard registered with Required=true, got ok=%v def=%+v", ok, def)
 	}
-	err := supState3.Start(context.Background(), "Shield")
+	err := supState3.Start(context.Background(), "Halfshard")
 	if err == nil {
-		t.Fatal("FAIL-OPEN: expected Start(Shield) to fail closed in State 3")
+		t.Fatal("FAIL-OPEN: expected Start(Halfshard) to fail closed in State 3")
 	}
 	var ffe *ux.FixForwardError
 	if !errors.As(err, &ffe) || ffe.ExitCode != pillars.ExitCodeRequiredMissing {

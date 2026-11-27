@@ -1,5 +1,5 @@
 // Package supervisor provides lifecycle orchestration for all resident sovereign security daemons:
-// Locksmith, Argus, Aegisbox, Shield, and Stormcage.
+// Locksmith, Argus, Aegisbox, Halfshard, and Stormcage.
 package supervisor
 
 import (
@@ -131,7 +131,7 @@ func (s *Supervisor) lookupBinary(name string) (string, error) {
 }
 
 // NewDefaultSupervisor returns a Supervisor pre-configured with all active sovereign fabric daemons,
-// honoring 3-state optional pillar discovery for Shield and Stormcage from the current directory's fabrial.yaml.
+// honoring 3-state optional pillar discovery for Halfshard and Stormcage from the current directory's fabrial.yaml.
 func NewDefaultSupervisor() *Supervisor {
 	return NewSupervisorForDir(".")
 }
@@ -143,7 +143,7 @@ func NewSupervisorForDir(dir string) *Supervisor {
 }
 
 // NewSupervisor builds a Supervisor with an injectable pillar resolver and explicit policy requirements.
-// Optional private daemons (Shield, Stormcage) are omitted in State 1 (absent & unrequired),
+// Optional private daemons (Halfshard, Stormcage) are omitted in State 1 (absent & unrequired),
 // auto-included in State 2 (installed on PATH), and included with Required=true in State 3 (missing & required).
 func NewSupervisor(resolver *pillars.Resolver, req pillars.Requirements) *Supervisor {
 	if resolver == nil {
@@ -205,17 +205,17 @@ func NewSupervisor(resolver *pillars.Resolver, req pillars.Requirements) *Superv
 		},
 	}
 
-	if shieldRes := resolver.ResolveShield(req); shieldRes.IsVisible() {
+	if halfshardRes := resolver.ResolveHalfshard(req); halfshardRes.IsVisible() {
 		services = append(services, ServiceDef{
-			Name:       "Shield",
-			BinaryName: "shield",
+			Name:       "Halfshard",
+			BinaryName: "halfshard",
 			StartArgs:  []string{"proxy", "--addr", "127.0.0.1:8443", "--tls"},
-			PIDFile:    filepath.Join(home, ".shield", "shield.pid"),
-			LogFile:    filepath.Join(home, ".shield", "proxy.log"),
+			PIDFile:    filepath.Join(home, ".halfshard", "halfshard.pid"),
+			LogFile:    filepath.Join(home, ".halfshard", "proxy.log"),
 			TCPAddr:    "127.0.0.1:8443",
-			Required:   shieldRes.Required,
+			Required:   halfshardRes.Required,
 			HealthProbe: func(_ context.Context) bool {
-				_, ok := router.DetectShieldProxy()
+				_, ok := router.DetectHalfshardProxy()
 				return ok
 			},
 		})

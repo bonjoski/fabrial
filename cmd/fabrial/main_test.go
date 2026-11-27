@@ -57,7 +57,7 @@ func TestFabrial_PrintVersion(t *testing.T) {
 		if !strings.Contains(out, "Locksmith") || !strings.Contains(out, "Aegisbox") || !strings.Contains(out, "Argus") {
 			t.Fatalf("version output missing core pillars: %s", out)
 		}
-		if strings.Contains(out, "Shield") || strings.Contains(out, "Stormcage") {
+		if strings.Contains(out, "Halfshard") || strings.Contains(out, "Stormcage") {
 			t.Fatalf("State 1: version output leaked absent optional pillars:\n%s", out)
 		}
 	})
@@ -65,7 +65,7 @@ func TestFabrial_PrintVersion(t *testing.T) {
 	t.Run("State2_Installed", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		restore := pillars.SetDefaultLookup(pillars.StaticLookup(map[string]string{
-			"shield":    "/opt/homebrew/Cellar/shield/0.4.0/bin/shield",
+			"halfshard": "/opt/homebrew/Cellar/halfshard/0.4.0/bin/halfshard",
 			"stormcage": "/opt/homebrew/Cellar/stormcage/0.4.0/bin/stormcage",
 		}))
 		defer restore()
@@ -73,8 +73,8 @@ func TestFabrial_PrintVersion(t *testing.T) {
 		out := captureOutput(func() {
 			printVersion()
 		})
-		if !strings.Contains(out, "Shield") || !strings.Contains(out, "Stormcage") {
-			t.Fatalf("State 2: expected Shield and Stormcage in version output:\n%s", out)
+		if !strings.Contains(out, "Halfshard") || !strings.Contains(out, "Stormcage") {
+			t.Fatalf("State 2: expected Halfshard and Stormcage in version output:\n%s", out)
 		}
 	})
 }
@@ -93,8 +93,8 @@ func TestFabrial_PrintUsage(t *testing.T) {
 	if !strings.Contains(out, "--profile agent") || !strings.Contains(out, "--microvm") {
 		t.Fatalf("usage missing key execution flags: %s", out)
 	}
-	if strings.Contains(out, "Shield") || strings.Contains(out, "Stormcage") || strings.Contains(out, "HTTP_PROXY") {
-		t.Fatalf("State 1: usage output should not mention Shield, Stormcage, or HTTP_PROXY:\n%s", out)
+	if strings.Contains(out, "Halfshard") || strings.Contains(out, "Stormcage") || strings.Contains(out, "HTTP_PROXY") {
+		t.Fatalf("State 1: usage output should not mention Halfshard, Stormcage, or HTTP_PROXY:\n%s", out)
 	}
 }
 
@@ -117,7 +117,7 @@ func TestFabrial_Doctor(t *testing.T) {
 				t.Fatalf("doctor output missing core pillar %q: %s", pillar, out)
 			}
 		}
-		if strings.Contains(out, "Shield") || strings.Contains(out, "Stormcage") {
+		if strings.Contains(out, "Halfshard") || strings.Contains(out, "Stormcage") {
 			t.Fatalf("State 1: doctor output leaked absent optional pillars:\n%s", out)
 		}
 	})
@@ -125,7 +125,7 @@ func TestFabrial_Doctor(t *testing.T) {
 	t.Run("State2_InstalledOptionalPillarsShown", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		restore := pillars.SetDefaultLookup(pillars.StaticLookup(map[string]string{
-			"shield":    "/opt/homebrew/Cellar/shield/0.4.0/bin/shield",
+			"halfshard": "/opt/homebrew/Cellar/halfshard/0.4.0/bin/halfshard",
 			"stormcage": "/opt/homebrew/Cellar/stormcage/0.4.0/bin/stormcage",
 		}))
 		defer restore()
@@ -138,7 +138,7 @@ func TestFabrial_Doctor(t *testing.T) {
 		out := stdout.String()
 		allPillars := []string{
 			"Airlock", "Locksmith", "Aegisbox", "Argus",
-			"Shield", "Conjoiner", "Stormcage", "Soulcaster", "Bomhound",
+			"Halfshard", "Conjoiner", "Stormcage", "Soulcaster", "Bomhound",
 		}
 		for _, pillar := range allPillars {
 			if !strings.Contains(out, pillar) {
@@ -152,17 +152,17 @@ func TestFabrial_Doctor(t *testing.T) {
 		defer restore()
 
 		workDir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(workDir, "fabrial.yaml"), []byte("version: \"1\"\nrequire_shield: true\n"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(workDir, "fabrial.yaml"), []byte("version: \"1\"\nrequire_halfshard: true\n"), 0644); err != nil {
 			t.Fatalf("write fabrial.yaml: %v", err)
 		}
 
 		var stdout, stderr bytes.Buffer
 		code := runDoctor([]string{}, workDir, &stdout, &stderr)
 		if code != pillars.ExitCodeRequiredMissing {
-			t.Fatalf("FAIL-OPEN: expected exit 126 for missing required Shield, got %d (stderr: %s)", code, stderr.String())
+			t.Fatalf("FAIL-OPEN: expected exit 126 for missing required Halfshard, got %d (stderr: %s)", code, stderr.String())
 		}
-		if !strings.Contains(stderr.String(), "require_shield") {
-			t.Fatalf("expected FixForwardError mentioning require_shield on stderr, got: %s", stderr.String())
+		if !strings.Contains(stderr.String(), "require_halfshard") {
+			t.Fatalf("expected FixForwardError mentioning require_halfshard on stderr, got: %s", stderr.String())
 		}
 
 		// Also verify runPolicy and runExec fail closed with exit 126
@@ -183,7 +183,7 @@ func TestFabrial_Doctor(t *testing.T) {
 func TestFabrial_DoctorJSON(t *testing.T) {
 	t.Setenv("HOME", t.TempDir())
 	restore := pillars.SetDefaultLookup(pillars.StaticLookup(map[string]string{
-		"shield":    "/opt/homebrew/Cellar/shield/0.4.0/bin/shield",
+		"halfshard": "/opt/homebrew/Cellar/halfshard/0.4.0/bin/halfshard",
 		"stormcage": "/opt/homebrew/Cellar/stormcage/0.4.0/bin/stormcage",
 	}))
 	defer restore()
@@ -202,7 +202,7 @@ func TestFabrial_DoctorJSON(t *testing.T) {
 
 	allPillars := []string{
 		"Airlock", "Locksmith", "Aegisbox", "Argus",
-		"Shield", "Conjoiner", "Stormcage", "Soulcaster", "Bomhound",
+		"Halfshard", "Conjoiner", "Stormcage", "Soulcaster", "Bomhound",
 	}
 	for _, pillar := range allPillars {
 		found := false
@@ -232,7 +232,7 @@ func TestFabrial_DaemonStatus(t *testing.T) {
 	if !strings.Contains(out, "Fabrial Resident Daemons Status") {
 		t.Fatalf("unexpected daemon status output: %s", out)
 	}
-	if strings.Contains(out, "Shield") || strings.Contains(out, "Stormcage") {
+	if strings.Contains(out, "Halfshard") || strings.Contains(out, "Stormcage") {
 		t.Fatalf("State 1: daemon status leaked absent optional daemons:\n%s", out)
 	}
 }

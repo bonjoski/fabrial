@@ -131,7 +131,7 @@ func main() {
 func printUsage() {
 	req, _ := pillars.LoadRequirements("", ".")
 	envVars := "CONJOINER_TASK_TOKEN, FABRIAL_SESSION_ACTIVE"
-	if pillars.DefaultResolver().ResolveShield(req).IsVisible() {
+	if pillars.DefaultResolver().ResolveHalfshard(req).IsVisible() {
 		envVars = "HTTP_PROXY, " + envVars
 	}
 	fmt.Printf(`💎 Fabrial — The Sovereign AI Agent Security Fabric
@@ -218,8 +218,8 @@ func printVersion() {
 	fmt.Println("  • Aegisbox:   Hardware MicroVM & Shadow CoW Workspace")
 	fmt.Println("  • Argus:      Pre-Gate AST Inspection & SIEM Telemetry Bus")
 	fmt.Println("  • Locksmith:  Biometric Hardware Vault & ETX Lease Engine")
-	if res.ResolveShield(req).IsVisible() {
-		fmt.Println("  • Shield:     Secret Redaction & Fail-Closed Wire Guard Proxy")
+	if res.ResolveHalfshard(req).IsVisible() {
+		fmt.Println("  • Halfshard:  Secret Redaction & Fail-Closed Wire Guard Proxy")
 	}
 	fmt.Println("  • Conjoiner:  NIST SP 800-207A Agentic IAM & DPoP Token Broker")
 	if res.ResolveStormcage(req).IsVisible() {
@@ -1219,8 +1219,8 @@ func handleSession(args []string) {
 			TTL:                ttl,
 			AllowedScopes:      scopes,
 			BiometricPreflight: biometric,
-			ShieldProxyAddr:    resolvedProxy,
-			RequireShield:      req.RequireShield,
+			HalfshardProxyAddr: resolvedProxy,
+			RequireHalfshard:   req.IsHalfshardRequired(),
 			RequireStormcage:   req.RequireStormcage,
 		})
 		if err != nil {
@@ -1720,14 +1720,14 @@ func printAuthSummary(verb string, authCtx *auth.FabrialAuthContext, bundle *aut
 	}
 	req, _ := pillars.LoadRequirements("", ".")
 	if toolchain != nil {
-		req.RequireShield = req.RequireShield || toolchain.Fabrial.RequireShield
+		req.RequireHalfshard = req.IsHalfshardRequired() || toolchain.Fabrial.IsHalfshardRequired()
 		req.RequireStormcage = req.RequireStormcage || toolchain.Fabrial.RequireStormcage
 	}
 	res := pillars.DefaultResolver()
-	shieldVisible := res.ResolveShield(req).IsVisible()
+	halfshardVisible := res.ResolveHalfshard(req).IsVisible()
 	stormcageVisible := res.ResolveStormcage(req).IsVisible()
 	toolCount := 8
-	if shieldVisible {
+	if halfshardVisible {
 		toolCount++
 	}
 	if stormcageVisible {
@@ -1738,8 +1738,8 @@ func printAuthSummary(verb string, authCtx *auth.FabrialAuthContext, bundle *aut
 	fmt.Printf("✔ Toolchain Policies:    Synchronized across %d active sovereign tools\n", toolCount)
 	fmt.Printf("                         - Argus: %d allowed registries, %d blocked\n", len(toolchain.Argus.AllowedRegistries), len(toolchain.Argus.BlockedRegistries))
 	fmt.Printf("                         - Locksmith: cert issuance=%v, %d domains\n", toolchain.Locksmith.CertIssuanceEnabled, len(toolchain.Locksmith.AllowedCertDomains))
-	if shieldVisible {
-		fmt.Printf("                         - Shield: anti-ssrf=%v, fail-closed=%v\n", toolchain.Shield.BlockCloudMetadata, toolchain.Shield.FailClosedWireGuard)
+	if halfshardVisible {
+		fmt.Printf("                         - Halfshard: anti-ssrf=%v, fail-closed=%v\n", toolchain.Halfshard.BlockCloudMetadata, toolchain.Halfshard.FailClosedWireGuard)
 	}
 	fmt.Println(strings.Repeat("─", 75))
 }
@@ -1819,7 +1819,7 @@ func runPolicy(args []string, projectDir string, stdout, stderr io.Writer) int {
 
 	if toolchain != nil {
 		mergedReq := pillars.Requirements{
-			RequireShield:    req.RequireShield || toolchain.Fabrial.RequireShield,
+			RequireHalfshard: req.IsHalfshardRequired() || toolchain.Fabrial.IsHalfshardRequired(),
 			RequireStormcage: req.RequireStormcage || toolchain.Fabrial.RequireStormcage,
 		}
 		if err := pillars.DefaultResolver().EnforceRequired(mergedReq); err != nil {
@@ -1832,7 +1832,7 @@ func runPolicy(args []string, projectDir string, stdout, stderr io.Writer) int {
 
 	res := pillars.DefaultResolver()
 	toolCount := 8
-	if res.ResolveShield(req).IsVisible() {
+	if res.ResolveHalfshard(req).IsVisible() {
 		toolCount++
 	}
 	if res.ResolveStormcage(req).IsVisible() {

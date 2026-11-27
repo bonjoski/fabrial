@@ -47,7 +47,7 @@ func BuildEnvironmentWithWorkspace(sessionID SessionID, parentID SessionID, toke
 		env["HTTPS_PROXY"] = proxyAddr
 		env["http_proxy"] = proxyAddr
 		env["https_proxy"] = proxyAddr
-		env["SOVEREIGN_SHIELD_ACTIVE"] = "1"
+		env["SOVEREIGN_HALFSHARD_ACTIVE"] = "1"
 	}
 
 	if caCertPath != "" {
@@ -66,11 +66,11 @@ func BuildEnvironmentWithWorkspace(sessionID SessionID, parentID SessionID, toke
 	return env
 }
 
-// ResolveSessionProxyAddr applies the 3-State optional pillar discovery contract for Shield
+// ResolveSessionProxyAddr applies the 3-State optional pillar discovery contract for Halfshard
 // (and enforces any required Stormcage pillar) when determining the ambient session HTTP_PROXY:
 //   - State 3 (required pillar missing): returns a fail-closed *ux.FixForwardError (exit 126).
-//   - State 2 (shield installed on PATH): returns explicitAddr if provided, else active proxy addr or 127.0.0.1:8443.
-//   - State 1 (shield absent & unrequired): returns explicitAddr only if explicitly set by flag, else "" (no dead proxy).
+//   - State 2 (halfshard installed on PATH): returns explicitAddr if provided, else active proxy addr or 127.0.0.1:8443.
+//   - State 1 (halfshard absent & unrequired): returns explicitAddr only if explicitly set by flag, else "" (no dead proxy).
 func ResolveSessionProxyAddr(explicitAddr string, explicitSet bool, resolver *pillars.Resolver, req pillars.Requirements) (string, error) {
 	if resolver == nil {
 		resolver = pillars.DefaultResolver()
@@ -78,12 +78,12 @@ func ResolveSessionProxyAddr(explicitAddr string, explicitSet bool, resolver *pi
 	if err := resolver.EnforceRequired(req); err != nil {
 		return "", err
 	}
-	shieldRes := resolver.ResolveShield(req)
-	if shieldRes.IsActive() {
+	hsRes := resolver.ResolveHalfshard(req)
+	if hsRes.IsActive() {
 		if explicitSet && strings.TrimSpace(explicitAddr) != "" {
 			return strings.TrimSpace(explicitAddr), nil
 		}
-		if addr, ok := router.DetectShieldProxy(); ok {
+		if addr, ok := router.DetectHalfshardProxy(); ok {
 			return addr, nil
 		}
 		if strings.TrimSpace(explicitAddr) != "" {
@@ -91,7 +91,7 @@ func ResolveSessionProxyAddr(explicitAddr string, explicitSet bool, resolver *pi
 		}
 		return "127.0.0.1:8443", nil
 	}
-	// State 1 (StateAbsent): never inject a dead default proxy pointing to a non-existent Shield daemon.
+	// State 1 (StateAbsent): never inject a dead default proxy pointing to a non-existent Halfshard daemon.
 	if explicitSet {
 		return strings.TrimSpace(explicitAddr), nil
 	}

@@ -34,11 +34,14 @@ type SessionConfig struct {
 	MaxVMs             int           `json:"max_vms,omitempty"`
 	AllowedScopes      []string      `json:"allowed_scopes"`
 	BiometricPreflight bool          `json:"biometric_preflight"`
-	ShieldProxyAddr    string            `json:"shield_proxy_addr,omitempty"`
-	ShieldCACertPath   string            `json:"shield_ca_cert_path,omitempty"`
-	RequireShield      bool              `json:"require_shield,omitempty"`
-	RequireStormcage   bool              `json:"require_stormcage,omitempty"`
-	PillarResolver     *pillars.Resolver `json:"-"`
+	HalfshardProxyAddr  string            `json:"halfshard_proxy_addr,omitempty"`
+	HalfshardCACertPath string            `json:"halfshard_ca_cert_path,omitempty"`
+	ShieldProxyAddr     string            `json:"shield_proxy_addr,omitempty"`   // Deprecated alias for HalfshardProxyAddr.
+	ShieldCACertPath    string            `json:"shield_ca_cert_path,omitempty"` // Deprecated alias for HalfshardCACertPath.
+	RequireHalfshard    bool              `json:"require_halfshard,omitempty"`
+	RequireShield       bool              `json:"require_shield,omitempty"` // Deprecated monotonic alias for RequireHalfshard.
+	RequireStormcage    bool              `json:"require_stormcage,omitempty"`
+	PillarResolver      *pillars.Resolver `json:"-"`
 }
 
 // SessionGrant represents an authenticated session lease with ambient security context.

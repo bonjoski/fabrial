@@ -91,8 +91,8 @@ type LocksmithConfig struct {
 	DisallowedSecretPrefixes     []string `json:"disallowed_secret_prefixes"`
 }
 
-// ShieldConfig defines client-side secret redaction and fail-closed wire guard proxy policy.
-type ShieldConfig struct {
+// HalfshardConfig defines client-side secret redaction and fail-closed wire guard proxy policy.
+type HalfshardConfig struct {
 	EntropyThreshold          float64  `json:"entropy_threshold"`
 	FailClosedWireGuard       bool     `json:"fail_closed_wire_guard"`
 	RedactionMask             string   `json:"redaction_mask"`
@@ -104,6 +104,9 @@ type ShieldConfig struct {
 	MaxRequestSizeMB          int      `json:"max_request_size_mb"`
 	DeTokenizationEnabled     bool     `json:"detokenization_enabled"`
 }
+
+// ShieldConfig is a deprecated type alias for HalfshardConfig.
+type ShieldConfig = HalfshardConfig
 
 // ConjoinerConfig defines NIST SP 800-207A agentic IAM broker & gateway policy.
 type ConjoinerConfig struct {
@@ -158,8 +161,14 @@ type FabrialConfig struct {
 	MaxSubagentWorkers          int               `json:"max_subagent_workers"`
 	EscalateShellBuiltins       bool              `json:"escalate_shell_builtins"`
 	FailClosedOnError           bool              `json:"fail_closed_on_error"`
-	RequireShield               bool              `json:"require_shield,omitempty"`
+	RequireHalfshard            bool              `json:"require_halfshard,omitempty"`
+	RequireShield               bool              `json:"require_shield,omitempty"` // Deprecated monotonic alias for RequireHalfshard.
 	RequireStormcage            bool              `json:"require_stormcage,omitempty"`
+}
+
+// IsHalfshardRequired reports whether Halfshard is required (monotonically honoring legacy RequireShield).
+func (f FabrialConfig) IsHalfshardRequired() bool {
+	return f.RequireHalfshard || f.RequireShield
 }
 
 // ToolchainPolicies aggregates policies across all 10 bonjoski sovereign tools.
@@ -168,7 +177,8 @@ type ToolchainPolicies struct {
 	Aegisbox   AegisboxConfig   `json:"aegisbox"`
 	Argus      ArgusConfig      `json:"argus"`
 	Locksmith  LocksmithConfig  `json:"locksmith"`
-	Shield     ShieldConfig     `json:"shield"`
+	Halfshard  HalfshardConfig  `json:"halfshard"`
+	Shield     *HalfshardConfig `json:"shield,omitempty"` // Deprecated alias for Halfshard.
 	Conjoiner  ConjoinerConfig  `json:"conjoiner"`
 	Stormcage  StormcageConfig  `json:"stormcage"`
 	Soulcaster SoulcasterConfig `json:"soulcaster"`
@@ -256,10 +266,10 @@ func DefaultToolchainPolicies() ToolchainPolicies {
 				"PROD_MASTER_",
 			},
 		},
-		Shield: ShieldConfig{
+		Halfshard: HalfshardConfig{
 			EntropyThreshold:    4.2,
 			FailClosedWireGuard: true,
-			RedactionMask:       "[REDACTED_BY_SHIELD]",
+			RedactionMask:       "[REDACTED_BY_HALFSHARD]",
 			StripZeroWidthRunes: true,
 			BlockPrivateIPs:     true,
 			BlockCloudMetadata:  true,

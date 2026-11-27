@@ -27,7 +27,7 @@ const (
 	PillarLocksmith  PillarID = "Locksmith"
 	PillarAegisbox   PillarID = "Aegisbox"
 	PillarArgus      PillarID = "Argus"
-	PillarShield     PillarID = "Shield"
+	PillarHalfshard  PillarID = "Halfshard"
 	PillarConjoiner  PillarID = "Conjoiner"
 	PillarStormcage  PillarID = "Stormcage"
 	PillarSoulcaster PillarID = "Soulcaster"
@@ -63,7 +63,7 @@ var CanonicalOrder = []PillarID{
 	PillarLocksmith,
 	PillarAegisbox,
 	PillarArgus,
-	PillarShield,
+	PillarHalfshard,
 	PillarConjoiner,
 	PillarStormcage,
 	PillarSoulcaster,
@@ -115,7 +115,7 @@ func NewInspector(timeout time.Duration) *Inspector {
 }
 
 // InspectAll concurrently probes all active pillars and returns reports in canonical order.
-// Optional private pillars (Shield, Stormcage) follow the 3-State discovery contract:
+// Optional private pillars (Halfshard, Stormcage) follow the 3-State discovery contract:
 //   - State 1 (absent & unrequired): omitted completely so public users see zero noise or score degradation.
 //   - State 2 (installed on PATH): auto-discovered and probed normally.
 //   - State 3 (missing but explicitly required in fabrial.yaml): included as OFFLINE with Required=true.
@@ -126,7 +126,7 @@ func (in *Inspector) InspectAll(ctx context.Context, projectDir string) []Pillar
 
 	req := in.resolveRequirements(projectDir)
 	res := in.resolver()
-	shieldRes := res.ResolveShield(req)
+	halfshardRes := res.ResolveHalfshard(req)
 	stormcageRes := res.ResolveStormcage(req)
 
 	probers := map[PillarID]func(context.Context, string) PillarHealth{
@@ -139,10 +139,10 @@ func (in *Inspector) InspectAll(ctx context.Context, projectDir string) []Pillar
 		PillarBomhound:   in.probeBomhound,
 	}
 
-	if shieldRes.IsVisible() {
-		sr := shieldRes
-		probers[PillarShield] = func(pCtx context.Context, _ string) PillarHealth {
-			return in.probeShieldWithResolution(pCtx, sr)
+	if halfshardRes.IsVisible() {
+		hr := halfshardRes
+		probers[PillarHalfshard] = func(pCtx context.Context, _ string) PillarHealth {
+			return in.probeHalfshardWithResolution(pCtx, hr)
 		}
 	}
 	if stormcageRes.IsVisible() {
@@ -403,19 +403,19 @@ func (in *Inspector) probeArgus(ctx context.Context, _ string) PillarHealth {
 	}
 }
 
-func (in *Inspector) probeShieldWithResolution(_ context.Context, res pillars.Resolution) PillarHealth {
+func (in *Inspector) probeHalfshardWithResolution(_ context.Context, res pillars.Resolution) PillarHealth {
 	if res.State == pillars.StateRequiredMissing {
 		return PillarHealth{
-			Pillar:   PillarShield,
+			Pillar:   PillarHalfshard,
 			Role:     "Secret Redaction & Fail-Closed Wire Guard",
 			Status:   StatusOffline,
-			Details:  "REQUIRED by fabrial.yaml (require_shield: true), but shield binary not found on PATH",
+			Details:  "REQUIRED by fabrial.yaml (require_halfshard: true), but halfshard binary not found on PATH",
 			Required: true,
 		}
 	}
 
 	bin := res.BinaryPath
-	proxyAddr, proxyOnline := router.DetectShieldProxy()
+	proxyAddr, proxyOnline := router.DetectHalfshardProxy()
 
 	if proxyOnline {
 		details := fmt.Sprintf("Wire guard proxy active on %s", proxyAddr)
@@ -423,7 +423,7 @@ func (in *Inspector) probeShieldWithResolution(_ context.Context, res pillars.Re
 			details = fmt.Sprintf("Wire guard proxy active on %s (binary at %s)", proxyAddr, bin)
 		}
 		return PillarHealth{
-			Pillar:     PillarShield,
+			Pillar:     PillarHalfshard,
 			Role:       "Secret Redaction & Fail-Closed Wire Guard",
 			Status:     StatusOnline,
 			Details:    details,
@@ -434,20 +434,20 @@ func (in *Inspector) probeShieldWithResolution(_ context.Context, res pillars.Re
 
 	if bin != "" {
 		return PillarHealth{
-			Pillar:     PillarShield,
+			Pillar:     PillarHalfshard,
 			Role:       "Secret Redaction & Fail-Closed Wire Guard",
 			Status:     StatusDegraded,
-			Details:    fmt.Sprintf("Available at %s (proxy offline; run 'fabrial daemon start' or 'shield proxy')", bin),
+			Details:    fmt.Sprintf("Available at %s (proxy offline; run 'fabrial daemon start' or 'halfshard proxy')", bin),
 			BinaryPath: bin,
 			Required:   res.Required,
 		}
 	}
 
 	return PillarHealth{
-		Pillar:   PillarShield,
+		Pillar:   PillarHalfshard,
 		Role:     "Secret Redaction & Fail-Closed Wire Guard",
 		Status:   StatusOffline,
-		Details:  "shield binary not found on PATH",
+		Details:  "halfshard binary not found on PATH",
 		Required: res.Required,
 	}
 }

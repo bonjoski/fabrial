@@ -91,7 +91,7 @@ func (sm *SessionManager) activeCountLocked() int {
 // BeginSession initializes a master session with ambient environment and optional biometric pre-flight.
 func (sm *SessionManager) BeginSession(ctx context.Context, cfg SessionConfig) (*SessionGrant, error) {
 	// Enforce State 3 fail-closed requirements for optional pillars before allocating a session.
-	if cfg.RequireShield || cfg.RequireStormcage {
+	if cfg.RequireHalfshard || cfg.RequireShield || cfg.RequireStormcage {
 		resolver := cfg.PillarResolver
 		if resolver == nil {
 			resolver = sm.pillarResolver
@@ -100,6 +100,7 @@ func (sm *SessionManager) BeginSession(ctx context.Context, cfg SessionConfig) (
 			resolver = pillars.DefaultResolver()
 		}
 		if err := resolver.EnforceRequired(pillars.Requirements{
+			RequireHalfshard: cfg.RequireHalfshard || cfg.RequireShield,
 			RequireShield:    cfg.RequireShield,
 			RequireStormcage: cfg.RequireStormcage,
 		}); err != nil {
@@ -150,7 +151,15 @@ func (sm *SessionManager) BeginSession(ctx context.Context, cfg SessionConfig) (
 		scopes = []string{"read", "build", "test", "lint"}
 	}
 
-	env := BuildEnvironmentWithWorkspace(sessionID, "", masterToken, cfg.ShieldProxyAddr, cfg.ShieldCACertPath, cfg.WorkspacePath)
+	proxyAddr := cfg.HalfshardProxyAddr
+	if proxyAddr == "" {
+		proxyAddr = cfg.ShieldProxyAddr
+	}
+	caCertPath := cfg.HalfshardCACertPath
+	if caCertPath == "" {
+		caCertPath = cfg.ShieldCACertPath
+	}
+	env := BuildEnvironmentWithWorkspace(sessionID, "", masterToken, proxyAddr, caCertPath, cfg.WorkspacePath)
 
 	grant := &SessionGrant{
 		ID:          sessionID,

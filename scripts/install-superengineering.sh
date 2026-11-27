@@ -59,8 +59,8 @@ if [ "$IS_GLOBAL" = true ]; then
     ${CLI_BIN} commands create "stack-doctor" --command "fabrial doctor --fix" --provider none --scope global --icon "🩺" >/dev/null 2>&1 || true
     ${CLI_BIN} commands create "pre-flight" --command "argus vet --diff && soulcaster verify-patch -base HEAD" --provider none --scope global --icon "🛡️" >/dev/null 2>&1 || true
     ${CLI_BIN} project scripts set setup "fabrial doctor --fix" --scope user >/dev/null 2>&1 || true
-    if command -v shield >/dev/null 2>&1; then
-        ${CLI_BIN} project scripts set run shield "shield proxy --addr 127.0.0.1:8443 --tls" --scope user >/dev/null 2>&1 || true
+    if command -v halfshard >/dev/null 2>&1; then
+        ${CLI_BIN} project scripts set run halfshard "halfshard proxy --addr 127.0.0.1:8443 --tls" --scope user >/dev/null 2>&1 || true
     fi
     echo "✔ Successfully configured global App Settings for all paths and workspaces."
     exit 0
@@ -88,13 +88,13 @@ if 'fabrial doctor' not in setup:
     setup.append('fabrial doctor')
 cfg['setup'] = setup
 
-# Ensure run (only add shield proxy run target when shield is installed on PATH)
-if shutil.which('shield'):
+# Ensure run (only add halfshard proxy run target when halfshard is installed on PATH)
+if shutil.which('halfshard'):
     run = cfg.get('run', [])
-    if not any(r.get('name') == 'shield' for r in run):
+    if not any(r.get('name') == 'halfshard' for r in run):
         run.append({
-            'name': 'shield',
-            'commands': ['shield proxy --addr 127.0.0.1:8443 --tls'],
+            'name': 'halfshard',
+            'commands': ['halfshard proxy --addr 127.0.0.1:8443 --tls'],
             'default': False
         })
     cfg['run'] = run

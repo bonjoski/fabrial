@@ -122,22 +122,30 @@ func TestAdversarial_FAB08_GitWorktreeFileStopsPolicyTraversal(t *testing.T) {
 	}
 }
 
-// TestAdversarial_FAB09_ShieldFailClosedByDefault verifies that Shield.FailClosed defaults to true
-// in DefaultPolicy(), GetShieldConfig(), and YAML policies omitting fail_closed.
-func TestAdversarial_FAB09_ShieldFailClosedByDefault(t *testing.T) {
-	if !DefaultPolicy().GetShieldConfig().FailClosed {
-		t.Fatal("FAIL-OPEN (FAB-09): DefaultPolicy().Shield.FailClosed is false")
+// TestAdversarial_FAB09_HalfshardFailClosedByDefault verifies that Halfshard.FailClosed defaults to true
+// in DefaultPolicy(), GetHalfshardConfig(), and YAML policies omitting fail_closed (including legacy shield block).
+func TestAdversarial_FAB09_HalfshardFailClosedByDefault(t *testing.T) {
+	if !DefaultPolicy().GetHalfshardConfig().FailClosed {
+		t.Fatal("FAIL-OPEN (FAB-09): DefaultPolicy().Halfshard.FailClosed is false")
 	}
 	emptyPol := &Policy{Version: "1"}
-	if !emptyPol.GetShieldConfig().FailClosed {
-		t.Fatal("FAIL-OPEN (FAB-09): empty Policy.GetShieldConfig().FailClosed is false")
+	if !emptyPol.GetHalfshardConfig().FailClosed {
+		t.Fatal("FAIL-OPEN (FAB-09): empty Policy.GetHalfshardConfig().FailClosed is false")
 	}
 
 	var parsed Policy
-	if err := yaml.Unmarshal([]byte("version: \"2\"\nshield:\n  enabled: true\n"), &parsed); err != nil {
+	if err := yaml.Unmarshal([]byte("version: \"2\"\nhalfshard:\n  enabled: true\n"), &parsed); err != nil {
 		t.Fatalf("yaml unmarshal failed: %v", err)
 	}
-	if !parsed.GetShieldConfig().FailClosed {
-		t.Fatal("FAIL-OPEN (FAB-09): YAML shield block omitting fail_closed defaulted to false")
+	if !parsed.GetHalfshardConfig().FailClosed {
+		t.Fatal("FAIL-OPEN (FAB-09): YAML halfshard block omitting fail_closed defaulted to false")
+	}
+
+	var legacy Policy
+	if err := yaml.Unmarshal([]byte("version: \"2\"\nshield:\n  enabled: true\n"), &legacy); err != nil {
+		t.Fatalf("yaml unmarshal legacy shield failed: %v", err)
+	}
+	if !legacy.GetHalfshardConfig().FailClosed {
+		t.Fatal("FAIL-OPEN (FAB-09): legacy YAML shield block omitting fail_closed defaulted to false")
 	}
 }

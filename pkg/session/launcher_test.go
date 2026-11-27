@@ -62,7 +62,7 @@ func TestLauncher_OptionalPillars_3StateContract(t *testing.T) {
 		t.Skip("skipping session launch test on windows: requires /bin/sh")
 	}
 
-	t.Run("State1_NoShield_NoDeadHTTPProxyInjected", func(t *testing.T) {
+	t.Run("State1_NoHalfshard_NoDeadHTTPProxyInjected", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		emptyBin := t.TempDir()
 		workDir := t.TempDir()
@@ -77,7 +77,7 @@ func TestLauncher_OptionalPillars_3StateContract(t *testing.T) {
 			TargetCommand: "/bin/sh",
 			TargetArgs: []string{
 				"-c",
-				"if [ -n \"$HTTP_PROXY\" ] || [ -n \"$SOVEREIGN_SHIELD_ACTIVE\" ]; then exit 2; fi; if [ \"$FABRIAL_SESSION_ACTIVE\" != \"1\" ]; then exit 1; fi",
+				"if [ -n \"$HTTP_PROXY\" ] || [ -n \"$SOVEREIGN_HALFSHARD_ACTIVE\" ]; then exit 2; fi; if [ \"$FABRIAL_SESSION_ACTIVE\" != \"1\" ]; then exit 1; fi",
 			},
 			TTL:            10 * time.Minute,
 			UseAirlock:     false,
@@ -92,15 +92,15 @@ func TestLauncher_OptionalPillars_3StateContract(t *testing.T) {
 		if len(sessions) != 1 {
 			t.Fatalf("expected 1 active session, got %d", len(sessions))
 		}
-		if sessions[0].Environment["HTTP_PROXY"] != "" || sessions[0].Environment["SOVEREIGN_SHIELD_ACTIVE"] != "" {
-			t.Fatalf("State 1: unexpected Shield proxy env injected: %+v", sessions[0].Environment)
+		if sessions[0].Environment["HTTP_PROXY"] != "" || sessions[0].Environment["SOVEREIGN_HALFSHARD_ACTIVE"] != "" {
+			t.Fatalf("State 1: unexpected Halfshard proxy env injected: %+v", sessions[0].Environment)
 		}
 	})
 
-	t.Run("State2_ShieldInstalled_AutoWired", func(t *testing.T) {
+	t.Run("State2_HalfshardInstalled_AutoWired", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		resolver := &pillars.Resolver{
-			Lookup:            pillars.StaticLookup(map[string]string{"shield": "/opt/homebrew/Cellar/shield/0.4.0/bin/shield"}),
+			Lookup:            pillars.StaticLookup(map[string]string{"halfshard": "/opt/homebrew/Cellar/halfshard/0.4.0/bin/halfshard"}),
 			DisableTrustStore: true,
 		}
 		sm := NewSessionManager(WithPillarResolver(resolver))
@@ -113,7 +113,7 @@ func TestLauncher_OptionalPillars_3StateContract(t *testing.T) {
 			TargetCommand: "/bin/sh",
 			TargetArgs: []string{
 				"-c",
-				"if [ \"$SOVEREIGN_SHIELD_ACTIVE\" != \"1\" ] || [ -z \"$HTTP_PROXY\" ]; then exit 3; fi",
+				"if [ \"$SOVEREIGN_HALFSHARD_ACTIVE\" != \"1\" ] || [ -z \"$HTTP_PROXY\" ]; then exit 3; fi",
 			},
 			TTL:            10 * time.Minute,
 			UseAirlock:     false,
@@ -126,11 +126,11 @@ func TestLauncher_OptionalPillars_3StateContract(t *testing.T) {
 		}
 	})
 
-	t.Run("State3_RequireShieldOrStormcageMissing_FailClosedExit126", func(t *testing.T) {
+	t.Run("State3_RequireHalfshardOrStormcageMissing_FailClosedExit126", func(t *testing.T) {
 		t.Setenv("HOME", t.TempDir())
 		emptyBin := t.TempDir()
 		workDir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(workDir, "fabrial.yaml"), []byte("version: \"1\"\nrequire_shield: true\n"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(workDir, "fabrial.yaml"), []byte("version: \"1\"\nrequire_halfshard: true\n"), 0644); err != nil {
 			t.Fatalf("write fabrial.yaml: %v", err)
 		}
 		resolver := &pillars.Resolver{Lookup: pillars.LookupInPATH(emptyBin)}
@@ -144,7 +144,7 @@ func TestLauncher_OptionalPillars_3StateContract(t *testing.T) {
 			PillarResolver: resolver,
 		})
 		if err == nil {
-			t.Fatal("FAIL-OPEN: expected LaunchSession to fail closed when require_shield: true and shield is missing")
+			t.Fatal("FAIL-OPEN: expected LaunchSession to fail closed when require_halfshard: true and halfshard is missing")
 		}
 		var ffe *ux.FixForwardError
 		if !errors.As(err, &ffe) || ffe.ExitCode != pillars.ExitCodeRequiredMissing {

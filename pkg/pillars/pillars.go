@@ -1,5 +1,5 @@
 // Package pillars implements 3-State Smart Optional Discovery with 3-Layer Binary
-// Provenance & Identity Verification for security fabric pillars (Shield and Stormcage,
+// Provenance & Identity Verification for security fabric pillars (Halfshard and Stormcage,
 // plus zero-execution Go buildinfo verification for all bonjoski ecosystem binaries).
 //
 // 3-State Contract:
@@ -25,7 +25,7 @@ import (
 type OptionalPillar string
 
 const (
-	Shield    OptionalPillar = "shield"
+	Halfshard OptionalPillar = "halfshard"
 	Stormcage OptionalPillar = "stormcage"
 )
 
@@ -50,10 +50,17 @@ type LookupFunc func(name string) (string, error)
 
 // Requirements captures explicit policy requirements and cryptographic pins for optional pillars.
 type Requirements struct {
-	RequireShield       bool
+	RequireHalfshard    bool
+	RequireShield       bool // Deprecated backward-compatible monotonic alias for RequireHalfshard.
 	RequireStormcage    bool
 	StrictPillarPinning bool
 	PillarDigests       map[string]string
+}
+
+// IsHalfshardRequired reports whether Halfshard is explicitly required, monotonically honoring
+// legacy require_shield: true so existing hardened repositories never silently fail open.
+func (r Requirements) IsHalfshardRequired() bool {
+	return r.RequireHalfshard || r.RequireShield
 }
 
 // Resolution captures the 3-state discovery and provenance verification result for an optional pillar.
@@ -81,8 +88,8 @@ func (r Resolution) IsActive() bool {
 // DisplayName returns the canonical capitalized display name of the pillar.
 func (p OptionalPillar) DisplayName() string {
 	switch p {
-	case Shield:
-		return "Shield"
+	case Halfshard:
+		return "Halfshard"
 	case Stormcage:
 		return "Stormcage"
 	default:
@@ -93,8 +100,8 @@ func (p OptionalPillar) DisplayName() string {
 // ConfigField returns the fabrial.yaml boolean field name that mandates this pillar.
 func (p OptionalPillar) ConfigField() string {
 	switch p {
-	case Shield:
-		return "require_shield"
+	case Halfshard:
+		return "require_halfshard"
 	case Stormcage:
 		return "require_stormcage"
 	default:
@@ -105,8 +112,8 @@ func (p OptionalPillar) ConfigField() string {
 // IsOptionalPillar reports whether name (case-insensitive) identifies an optional pillar.
 func IsOptionalPillar(name string) (OptionalPillar, bool) {
 	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "shield":
-		return Shield, true
+	case "halfshard":
+		return Halfshard, true
 	case "stormcage":
 		return Stormcage, true
 	default:
@@ -127,6 +134,7 @@ func RequirementsFromPolicy(p *policy.Policy) Requirements {
 		}
 	}
 	return Requirements{
+		RequireHalfshard:    p.IsHalfshardRequired(),
 		RequireShield:       p.RequireShield,
 		RequireStormcage:    p.RequireStormcage,
 		StrictPillarPinning: p.StrictPillarPinning,
@@ -238,8 +246,8 @@ func (r *Resolver) trustStorePath() string {
 func (r *Resolver) Resolve(p OptionalPillar, req Requirements) Resolution {
 	required := false
 	switch p {
-	case Shield:
-		required = req.RequireShield
+	case Halfshard:
+		required = req.IsHalfshardRequired()
 	case Stormcage:
 		required = req.RequireStormcage
 	}
@@ -312,9 +320,9 @@ func asFixForward(err error, target **ux.FixForwardError) bool {
 	return false
 }
 
-// ResolveShield evaluates the 3-state contract for Shield.
-func (r *Resolver) ResolveShield(req Requirements) Resolution {
-	return r.Resolve(Shield, req)
+// ResolveHalfshard evaluates the 3-state contract for Halfshard.
+func (r *Resolver) ResolveHalfshard(req Requirements) Resolution {
+	return r.Resolve(Halfshard, req)
 }
 
 // ResolveStormcage evaluates the 3-state contract for Stormcage.
@@ -325,7 +333,7 @@ func (r *Resolver) ResolveStormcage(req Requirements) Resolution {
 // EnforceRequired verifies that all explicitly required (or digest-pinned) optional pillars pass.
 // Returns a *ux.FixForwardError with ExitCode 126 on any required-missing or digest-mismatch failure.
 func (r *Resolver) EnforceRequired(req Requirements) error {
-	for _, p := range []OptionalPillar{Shield, Stormcage} {
+	for _, p := range []OptionalPillar{Halfshard, Stormcage} {
 		res := r.Resolve(p, req)
 		if res.Err != nil {
 			return res.Err
@@ -339,9 +347,9 @@ func Resolve(p OptionalPillar, req Requirements) Resolution {
 	return DefaultResolver().Resolve(p, req)
 }
 
-// ResolveShield evaluates Shield using the default resolver.
-func ResolveShield(req Requirements) Resolution {
-	return DefaultResolver().ResolveShield(req)
+// ResolveHalfshard evaluates Halfshard using the default resolver.
+func ResolveHalfshard(req Requirements) Resolution {
+	return DefaultResolver().ResolveHalfshard(req)
 }
 
 // ResolveStormcage evaluates Stormcage using the default resolver.

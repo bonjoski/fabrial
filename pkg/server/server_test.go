@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/bonjoski/fabrial/pkg/doctor"
+	"github.com/bonjoski/fabrial/pkg/pillars"
 	"github.com/bonjoski/fabrial/pkg/supervisor"
 	"github.com/bonjoski/fabrial/pkg/version"
 )
@@ -45,6 +46,13 @@ func TestServer_HealthEndpoint(t *testing.T) {
 }
 
 func TestServer_DoctorEndpoint(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	restore := pillars.SetDefaultLookup(pillars.StaticLookup(map[string]string{
+		"halfshard": "/opt/homebrew/Cellar/halfshard/0.4.0/bin/halfshard",
+		"stormcage": "/opt/homebrew/Cellar/stormcage/0.4.0/bin/stormcage",
+	}))
+	defer restore()
+
 	srv := NewServer(Config{})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/doctor", nil)
 	req.Host = "127.0.0.1"
@@ -67,6 +75,13 @@ func TestServer_DoctorEndpoint(t *testing.T) {
 }
 
 func TestServer_DaemonsEndpoint(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	restore := pillars.SetDefaultLookup(pillars.StaticLookup(map[string]string{
+		"halfshard": "/opt/homebrew/Cellar/halfshard/0.4.0/bin/halfshard",
+		"stormcage": "/opt/homebrew/Cellar/stormcage/0.4.0/bin/stormcage",
+	}))
+	defer restore()
+
 	srv := NewServer(Config{})
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/daemons", nil)
 	req.Host = "127.0.0.1"

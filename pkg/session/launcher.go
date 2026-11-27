@@ -29,7 +29,8 @@ type LaunchConfig struct {
 	Biometric        bool              `json:"biometric"`
 	PolicyPath       string            `json:"policy_path,omitempty"`
 	WorkDir          string            `json:"work_dir,omitempty"`
-	RequireShield    bool              `json:"require_shield,omitempty"`
+	RequireHalfshard bool              `json:"require_halfshard,omitempty"`
+	RequireShield    bool              `json:"require_shield,omitempty"` // Deprecated monotonic alias for RequireHalfshard.
 	RequireStormcage bool              `json:"require_stormcage,omitempty"`
 	PillarResolver   *pillars.Resolver `json:"-"`
 }
@@ -50,7 +51,7 @@ func LaunchSession(ctx context.Context, sm *SessionManager, cfg LaunchConfig) er
 		cfg.Profile = "agent"
 	}
 
-	// Enforce 3-State optional pillar discovery (Shield / Stormcage).
+	// Enforce 3-State optional pillar discovery (Halfshard / Stormcage).
 	// State 3 (explicitly required in fabrial.yaml or LaunchConfig but missing on PATH) fails closed (exit 126).
 	resolver := cfg.PillarResolver
 	if resolver == nil && sm != nil && sm.pillarResolver != nil {
@@ -61,12 +62,16 @@ func LaunchSession(ctx context.Context, sm *SessionManager, cfg LaunchConfig) er
 	}
 
 	req := pillars.Requirements{
+		RequireHalfshard: cfg.RequireHalfshard || cfg.RequireShield,
 		RequireShield:    cfg.RequireShield,
 		RequireStormcage: cfg.RequireStormcage,
 	}
 	if pol, _, err := policy.LoadPolicy(cfg.PolicyPath, cfg.WorkDir); err == nil && pol != nil {
-		req.RequireShield = req.RequireShield || pol.RequireShield
-		req.RequireStormcage = req.RequireStormcage || pol.RequireStormcage
+		polReq := pillars.RequirementsFromPolicy(pol)
+		req.RequireHalfshard = req.RequireHalfshard || polReq.IsHalfshardRequired()
+		req.RequireStormcage = req.RequireStormcage || polReq.RequireStormcage
+		req.StrictPillarPinning = polReq.StrictPillarPinning
+		req.PillarDigests = polReq.PillarDigests
 	} else if cfg.PolicyPath != "" {
 		return fmt.Errorf("failed to load fabrial policy: %w", err)
 	}
@@ -75,13 +80,13 @@ func LaunchSession(ctx context.Context, sm *SessionManager, cfg LaunchConfig) er
 		return err
 	}
 
-	// State 1 (Shield absent & unrequired): never inject a dead HTTP_PROXY / ShieldProxyAddr.
-	// State 2 (Shield installed): preserve explicit ProxyAddr or default to active/127.0.0.1:8443.
+	// State 1 (Halfshard absent & unrequired): never inject a dead HTTP_PROXY / HalfshardProxyAddr.
+	// State 2 (Halfshard installed): preserve explicit ProxyAddr or default to active/127.0.0.1:8443.
 	effectiveProxyAddr := ""
-	if resolver.ResolveShield(req).IsActive() {
+	if resolver.ResolveHalfshard(req).IsActive() {
 		if cfg.ProxyAddr != "" {
 			effectiveProxyAddr = cfg.ProxyAddr
-		} else if addr, ok := router.DetectShieldProxy(); ok {
+		} else if addr, ok := router.DetectHalfshardProxy(); ok {
 			effectiveProxyAddr = addr
 		} else {
 			effectiveProxyAddr = "127.0.0.1:8443"
@@ -104,9 +109,9 @@ func LaunchSession(ctx context.Context, sm *SessionManager, cfg LaunchConfig) er
 			WorkspacePath:      cfg.WorkDir,
 			TTL:                cfg.TTL,
 			AllowedScopes:      cfg.Scopes,
-			ShieldProxyAddr:    effectiveProxyAddr,
+			HalfshardProxyAddr: effectiveProxyAddr,
 			BiometricPreflight: cfg.Biometric,
-			RequireShield:      req.RequireShield,
+			RequireHalfshard:   req.IsHalfshardRequired(),
 			RequireStormcage:   req.RequireStormcage,
 			PillarResolver:     resolver,
 		}

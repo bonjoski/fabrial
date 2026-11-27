@@ -37,7 +37,7 @@ flowchart LR
 
 1. **Fabrial Binary:** `brew install bonjoski/tap/fabrial`
 2. **Locksmith Daemon:** Required if ephemeral credential injection is enabled (`locksmith daemon status`).
-3. **Shield Proxy:** Optional loopback secret redactor running on `127.0.0.1:8080`.
+3. **Halfshard Proxy:** Optional loopback secret redactor running on `127.0.0.1:8080`.
 
 ---
 
@@ -88,7 +88,7 @@ Expected output:
 Session ID:   ses_8f1a29d04b3e
 Status:       ACTIVE (Expires in 24m 12s)
 Active PID:   48912 (zsh)
-Inherited:    Locksmith Lease [lck_39bfa10] | Shield Proxy [127.0.0.1:8080]
+Inherited:    Locksmith Lease [lck_39bfa10] | Halfshard Proxy [127.0.0.1:8080]
 Hop Tax:      0.00ms (Ambient Direct Execution)
 ─────────────────────────────────────────────────────────────────
 ```

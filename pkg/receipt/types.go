@@ -70,7 +70,7 @@ var (
 		"soulcaster": {},
 		"bomhound":   {},
 		"conjoiner":  {},
-		"shield":     {},
+		"halfshard":  {},
 		"stormcage":  {},
 		"flightdeck": {},
 		"fabrial":    {},

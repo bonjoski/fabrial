@@ -59,7 +59,7 @@ func TestDefaultCommands(t *testing.T) {
 }
 
 func TestSuperEngineering_FreshDirectory(t *testing.T) {
-	t.Run("State1_ShieldAbsent_NoShieldRunScript", func(t *testing.T) {
+	t.Run("State1_HalfshardAbsent_NoHalfshardRunScript", func(t *testing.T) {
 		tempDir := t.TempDir()
 		emptyBin := t.TempDir()
 		resolver := &pillars.Resolver{Lookup: pillars.LookupInPATH(emptyBin)}
@@ -79,7 +79,7 @@ func TestSuperEngineering_FreshDirectory(t *testing.T) {
 			t.Errorf("unexpected SetupAdded: %v", res.SetupAdded)
 		}
 		if len(res.RunAdded) != 0 {
-			t.Errorf("State 1: expected zero run scripts added when shield is absent, got: %v", res.RunAdded)
+			t.Errorf("State 1: expected zero run scripts added when halfshard is absent, got: %v", res.RunAdded)
 		}
 
 		configPath := filepath.Join(tempDir, ".super.engineering", "config.json")
@@ -92,14 +92,14 @@ func TestSuperEngineering_FreshDirectory(t *testing.T) {
 			t.Fatalf("invalid JSON generated: %v", err)
 		}
 		if _, hasRun := parsed["run"]; hasRun {
-			t.Errorf("State 1: expected no 'run' key in fresh config when shield is absent, got: %v", parsed["run"])
+			t.Errorf("State 1: expected no 'run' key in fresh config when halfshard is absent, got: %v", parsed["run"])
 		}
 	})
 
-	t.Run("State2_ShieldInstalled_ShieldRunScriptAdded", func(t *testing.T) {
+	t.Run("State2_HalfshardInstalled_HalfshardRunScriptAdded", func(t *testing.T) {
 		tempDir := t.TempDir()
 		resolver := &pillars.Resolver{
-			Lookup:            pillars.StaticLookup(map[string]string{"shield": "/opt/homebrew/Cellar/shield/0.4.0/bin/shield"}),
+			Lookup:            pillars.StaticLookup(map[string]string{"halfshard": "/opt/homebrew/Cellar/halfshard/0.4.0/bin/halfshard"}),
 			DisableTrustStore: true,
 		}
 
@@ -107,8 +107,8 @@ func TestSuperEngineering_FreshDirectory(t *testing.T) {
 		if err != nil {
 			t.Fatalf("SuperEngineeringWithResolver failed: %v", err)
 		}
-		if len(res.RunAdded) != 1 || res.RunAdded[0] != "shield" {
-			t.Errorf("State 2: expected RunAdded=[shield], got %v", res.RunAdded)
+		if len(res.RunAdded) != 1 || res.RunAdded[0] != "halfshard" {
+			t.Errorf("State 2: expected RunAdded=[halfshard], got %v", res.RunAdded)
 		}
 
 		// Verify file on disk
@@ -147,17 +147,17 @@ func TestSuperEngineering_FreshDirectory(t *testing.T) {
 		}
 	})
 
-	t.Run("State3_RequireShieldMissing_FailClosedExit126", func(t *testing.T) {
+	t.Run("State3_RequireHalfshardMissing_FailClosedExit126", func(t *testing.T) {
 		tempDir := t.TempDir()
 		emptyBin := t.TempDir()
-		if err := os.WriteFile(filepath.Join(tempDir, "fabrial.yaml"), []byte("version: \"1\"\nrequire_shield: true\n"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tempDir, "fabrial.yaml"), []byte("version: \"1\"\nrequire_halfshard: true\n"), 0644); err != nil {
 			t.Fatalf("write fabrial.yaml: %v", err)
 		}
 		resolver := &pillars.Resolver{Lookup: pillars.LookupInPATH(emptyBin)}
 
 		_, err := SuperEngineeringWithResolver(tempDir, resolver)
 		if err == nil {
-			t.Fatal("FAIL-OPEN: expected SuperEngineeringWithResolver to fail closed when require_shield: true and shield is missing")
+			t.Fatal("FAIL-OPEN: expected SuperEngineeringWithResolver to fail closed when require_halfshard: true and halfshard is missing")
 		}
 		var ffe *ux.FixForwardError
 		if !errors.As(err, &ffe) || ffe.ExitCode != pillars.ExitCodeRequiredMissing {

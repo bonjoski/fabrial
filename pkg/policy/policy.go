@@ -137,8 +137,8 @@ type AttestationConfig struct {
 	OutputProvenance string   `yaml:"output_provenance,omitempty" json:"output_provenance,omitempty"`
 }
 
-// ShieldConfig configures client-side secret redaction and egress wire guard (Shield).
-type ShieldConfig struct {
+// HalfshardConfig configures client-side secret redaction and egress wire guard (Halfshard).
+type HalfshardConfig struct {
 	Enabled               bool    `yaml:"enabled" json:"enabled"`
 	ProxyAddr             string  `yaml:"proxy_addr,omitempty" json:"proxy_addr,omitempty"`
 	AutoInjectEnv         bool    `yaml:"auto_inject_env,omitempty" json:"auto_inject_env,omitempty"`
@@ -147,9 +147,12 @@ type ShieldConfig struct {
 	StripUnicodeSmuggling bool    `yaml:"strip_unicode_smuggling,omitempty" json:"strip_unicode_smuggling,omitempty"`
 }
 
-// UnmarshalYAML defaults ShieldConfig.FailClosed to true unless explicitly set to false in YAML.
-func (s *ShieldConfig) UnmarshalYAML(value *yaml.Node) error {
-	type rawShieldConfig struct {
+// ShieldConfig is a deprecated type alias preserved for backward compatibility.
+type ShieldConfig = HalfshardConfig
+
+// UnmarshalYAML defaults HalfshardConfig.FailClosed to true unless explicitly set to false in YAML.
+func (s *HalfshardConfig) UnmarshalYAML(value *yaml.Node) error {
+	type rawHalfshardConfig struct {
 		Enabled               bool    `yaml:"enabled"`
 		ProxyAddr             string  `yaml:"proxy_addr"`
 		AutoInjectEnv         bool    `yaml:"auto_inject_env"`
@@ -157,7 +160,7 @@ func (s *ShieldConfig) UnmarshalYAML(value *yaml.Node) error {
 		EntropyThreshold      float64 `yaml:"entropy_threshold"`
 		StripUnicodeSmuggling bool    `yaml:"strip_unicode_smuggling"`
 	}
-	var raw rawShieldConfig
+	var raw rawHalfshardConfig
 	if err := value.Decode(&raw); err != nil {
 		return err
 	}
@@ -206,7 +209,8 @@ type Policy struct {
 	Version             string             `yaml:"version" json:"version"`
 	Name                string             `yaml:"name,omitempty" json:"name,omitempty"`
 	DefaultTier         Tier               `yaml:"default_tier,omitempty" json:"default_tier,omitempty"`
-	RequireShield       bool               `yaml:"require_shield,omitempty" json:"require_shield,omitempty"`
+	RequireHalfshard    bool               `yaml:"require_halfshard,omitempty" json:"require_halfshard,omitempty"`
+	RequireShield       bool               `yaml:"require_shield,omitempty" json:"require_shield,omitempty"` // Deprecated monotonic alias for RequireHalfshard.
 	RequireStormcage    bool               `yaml:"require_stormcage,omitempty" json:"require_stormcage,omitempty"`
 	StrictPillarPinning bool               `yaml:"strict_pillar_pinning,omitempty" json:"strict_pillar_pinning,omitempty"`
 	PillarDigests       map[string]string  `yaml:"pillar_digests,omitempty" json:"pillar_digests,omitempty"`
@@ -215,15 +219,22 @@ type Policy struct {
 	Routing             *RoutingConfig     `yaml:"routing,omitempty" json:"routing,omitempty"`
 	Rules               []Rule             `yaml:"rules,omitempty" json:"rules,omitempty"`
 	Attestation         *AttestationConfig `yaml:"attestation,omitempty" json:"attestation,omitempty"`
-	Shield              *ShieldConfig      `yaml:"shield,omitempty" json:"shield,omitempty"`
+	Halfshard           *HalfshardConfig   `yaml:"halfshard,omitempty" json:"halfshard,omitempty"`
+	Shield              *HalfshardConfig   `yaml:"shield,omitempty" json:"shield,omitempty"` // Deprecated alias for Halfshard.
 	Firewall            *FirewallConfig    `yaml:"firewall,omitempty" json:"firewall,omitempty"`
 	IAM                 *IAMConfig         `yaml:"iam,omitempty" json:"iam,omitempty"`
 	SupplyChain         *SupplyChainConfig `yaml:"supply_chain,omitempty" json:"supply_chain,omitempty"`
 }
 
-// IsShieldRequired reports whether the policy explicitly mandates Shield (fail-closed if absent).
+// IsHalfshardRequired reports whether the policy explicitly mandates Halfshard (fail-closed if absent),
+// monotonically honoring the deprecated require_shield alias so legacy hardened repos never fail open.
+func (p *Policy) IsHalfshardRequired() bool {
+	return p != nil && (p.RequireHalfshard || p.RequireShield)
+}
+
+// IsShieldRequired is a deprecated alias for IsHalfshardRequired.
 func (p *Policy) IsShieldRequired() bool {
-	return p != nil && p.RequireShield
+	return p.IsHalfshardRequired()
 }
 
 // IsStormcageRequired reports whether the policy explicitly mandates Stormcage (fail-closed if absent).
@@ -622,7 +633,7 @@ func DefaultPolicy() *Policy {
 			EmitSLSA:         true,
 			OutputProvenance: ".intoto.jsonl",
 		},
-		Shield: &ShieldConfig{
+		Halfshard: &HalfshardConfig{
 			Enabled:          true,
 			ProxyAddr:        "127.0.0.1:8443",
 			AutoInjectEnv:    true,
@@ -690,21 +701,34 @@ func (p *Policy) ShouldAttest(cmdArgs []string) bool {
 	return false
 }
 
-// GetShieldConfig returns the configured Shield policy or defaults if active.
-func (p *Policy) GetShieldConfig() *ShieldConfig {
-	if p == nil || p.Shield == nil {
-		return &ShieldConfig{
+// GetHalfshardConfig returns the configured Halfshard policy (falling back to deprecated Shield) or defaults if active.
+func (p *Policy) GetHalfshardConfig() *HalfshardConfig {
+	var src *HalfshardConfig
+	if p != nil {
+		if p.Halfshard != nil {
+			src = p.Halfshard
+		} else if p.Shield != nil {
+			src = p.Shield
+		}
+	}
+	if src == nil {
+		return &HalfshardConfig{
 			Enabled:       true,
 			ProxyAddr:     "127.0.0.1:8443",
 			AutoInjectEnv: true,
 			FailClosed:    true,
 		}
 	}
-	cfg := *p.Shield
+	cfg := *src
 	if cfg.ProxyAddr == "" {
 		cfg.ProxyAddr = "127.0.0.1:8443"
 	}
 	return &cfg
+}
+
+// GetShieldConfig is a deprecated alias for GetHalfshardConfig.
+func (p *Policy) GetShieldConfig() *HalfshardConfig {
+	return p.GetHalfshardConfig()
 }
 
 // LoadFromFile parses a fabrial.yaml policy from an explicit file path.

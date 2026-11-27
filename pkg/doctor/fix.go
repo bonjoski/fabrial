@@ -226,8 +226,8 @@ func (f *Fixer) FixPillar(ctx context.Context, pillar PillarID) ([]FixAction, Pi
 
 func optionalPillarID(opt pillars.OptionalPillar) PillarID {
 	switch opt {
-	case pillars.Shield:
-		return PillarShield
+	case pillars.Halfshard:
+		return PillarHalfshard
 	case pillars.Stormcage:
 		return PillarStormcage
 	default:
@@ -237,7 +237,7 @@ func optionalPillarID(opt pillars.OptionalPillar) PillarID {
 
 func optionalPillarRole(opt pillars.OptionalPillar) string {
 	switch opt {
-	case pillars.Shield:
+	case pillars.Halfshard:
 		return "Secret Redaction & Fail-Closed Wire Guard"
 	case pillars.Stormcage:
 		return "Context & Memory Prompt Firewall"
@@ -254,8 +254,8 @@ func (f *Fixer) fixPillarInternal(ctx context.Context, pillar PillarID) []FixAct
 		return f.fixAegisbox(ctx)
 	case "argus", PillarArgus:
 		return f.fixArgus(ctx)
-	case "shield", PillarShield:
-		return f.fixShield(ctx)
+	case "halfshard", PillarHalfshard:
+		return f.fixHalfshard(ctx)
 	case "stormcage", PillarStormcage:
 		return f.fixStormcage(ctx)
 	case "airlock", PillarAirlock:
@@ -522,17 +522,17 @@ func (f *Fixer) fixArgus(ctx context.Context) []FixAction {
 	return actions
 }
 
-func (f *Fixer) fixShield(ctx context.Context) []FixAction {
+func (f *Fixer) fixHalfshard(ctx context.Context) []FixAction {
 	var actions []FixAction
 	req := f.inspector.resolveRequirements(f.projectDir)
-	res := f.inspector.resolver().ResolveShield(req)
+	res := f.inspector.resolver().ResolveHalfshard(req)
 	if res.State == pillars.StateAbsent {
 		return actions
 	}
 	if res.State == pillars.StateRequiredMissing {
 		actions = append(actions, FixAction{
-			Pillar:      PillarShield,
-			Description: "Required pillar Shield binary missing on PATH (fail-closed)",
+			Pillar:      PillarHalfshard,
+			Description: "Required pillar Halfshard binary missing on PATH (fail-closed)",
 			Success:     false,
 			Details:     res.Err.Error(),
 		})
@@ -541,11 +541,11 @@ func (f *Fixer) fixShield(ctx context.Context) []FixAction {
 
 	home, _ := os.UserHomeDir()
 	if home != "" {
-		shieldDir := filepath.Join(home, ".shield")
-		if _, dirErr := SecureDir0700(shieldDir); dirErr != nil {
+		hsDir := filepath.Join(home, ".halfshard")
+		if _, dirErr := SecureDir0700(hsDir); dirErr != nil {
 			actions = append(actions, FixAction{
-				Pillar:      PillarShield,
-				Description: "Refused insecure ~/.shield directory",
+				Pillar:      PillarHalfshard,
+				Description: "Refused insecure ~/.halfshard directory",
 				Success:     false,
 				Details:     dirErr.Error(),
 			})
@@ -560,26 +560,26 @@ func (f *Fixer) fixShield(ctx context.Context) []FixAction {
 	}
 
 	if res.IsActive() && f.daemonManager != nil {
-		if startErr := f.daemonManager.Start(ctx, "Shield"); startErr == nil {
+		if startErr := f.daemonManager.Start(ctx, "Halfshard"); startErr == nil {
 			if f.waitForTCP(ctx, "127.0.0.1:8443", 3*time.Second) {
 				actions = append(actions, FixAction{
-					Pillar:      PillarShield,
-					Description: "Started resident Shield wire guard proxy on 127.0.0.1:8443",
+					Pillar:      PillarHalfshard,
+					Description: "Started resident Halfshard wire guard proxy on 127.0.0.1:8443",
 					Success:     true,
 					Details:     "127.0.0.1:8443",
 				})
 			} else {
 				actions = append(actions, FixAction{
-					Pillar:      PillarShield,
-					Description: "Started Shield proxy but port did not respond within timeout",
+					Pillar:      PillarHalfshard,
+					Description: "Started Halfshard proxy but port did not respond within timeout",
 					Success:     false,
 					Details:     "127.0.0.1:8443",
 				})
 			}
 		} else {
 			actions = append(actions, FixAction{
-				Pillar:      PillarShield,
-				Description: fmt.Sprintf("Failed to start Shield proxy: %v", startErr),
+				Pillar:      PillarHalfshard,
+				Description: fmt.Sprintf("Failed to start Halfshard proxy: %v", startErr),
 				Success:     false,
 			})
 		}

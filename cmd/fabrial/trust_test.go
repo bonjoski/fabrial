@@ -14,14 +14,14 @@ import (
 )
 
 func TestFabrial_TrustCommand(t *testing.T) {
-	// Compile a real Go fixture with module github.com/bonjoski/shield so `fabrial trust pillar shield`
+	// Compile a real Go fixture with module github.com/bonjoski/halfshard so `fabrial trust pillar halfshard`
 	// exercises authentic Layer 1 + Layer 2 + Layer 3 SHA-256 pinning end-to-end.
 	srcDir := t.TempDir()
-	pkgDir := filepath.Join(srcDir, "cmd", "shield")
+	pkgDir := filepath.Join(srcDir, "cmd", "halfshard")
 	if err := os.MkdirAll(pkgDir, 0755); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(srcDir, "go.mod"), []byte("module github.com/bonjoski/shield\n\ngo 1.24\n"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(srcDir, "go.mod"), []byte("module github.com/bonjoski/halfshard\n\ngo 1.24\n"), 0644); err != nil {
 		t.Fatalf("write go.mod: %v", err)
 	}
 	if err := os.WriteFile(filepath.Join(pkgDir, "main.go"), []byte("package main\nfunc main() {}\n"), 0644); err != nil {
@@ -29,31 +29,31 @@ func TestFabrial_TrustCommand(t *testing.T) {
 	}
 
 	binDir := t.TempDir()
-	outBin := filepath.Join(binDir, "shield")
+	outBin := filepath.Join(binDir, "halfshard")
 	if runtime.GOOS == "windows" {
 		outBin += ".exe"
 	}
-	cmd := exec.Command("go", "build", "-o", outBin, "./cmd/shield")
+	cmd := exec.Command("go", "build", "-o", outBin, "./cmd/halfshard")
 	cmd.Dir = srcDir
 	cmd.Env = append(os.Environ(), "CGO_ENABLED=0", "GOWORK=off")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("build shield fixture: %v: %s", err, string(out))
+		t.Fatalf("build halfshard fixture: %v: %s", err, string(out))
 	}
 
 	storePath := filepath.Join(t.TempDir(), ".fabrial", "trusted-pillars.json")
 	lookup := pillars.LookupInPATH(binDir)
 
-	// 1. Pin shield
+	// 1. Pin halfshard
 	var stdout, stderr bytes.Buffer
-	code := runTrust([]string{"pillar", "shield", "--json"}, storePath, lookup, &stdout, &stderr)
+	code := runTrust([]string{"pillar", "halfshard", "--json"}, storePath, lookup, &stdout, &stderr)
 	if code != 0 {
-		t.Fatalf("runTrust pillar shield failed (code=%d): %s", code, stderr.String())
+		t.Fatalf("runTrust pillar halfshard failed (code=%d): %s", code, stderr.String())
 	}
 	var res pillars.TrustPillarResult
 	if err := json.Unmarshal(stdout.Bytes(), &res); err != nil {
 		t.Fatalf("unmarshal trust result: %v (raw=%s)", err, stdout.String())
 	}
-	if res.Name != "shield" || res.ModulePath != "github.com/bonjoski/shield" || !pillars.IsValidSHA256Hex(res.SHA256) {
+	if res.Name != "halfshard" || res.ModulePath != "github.com/bonjoski/halfshard" || !pillars.IsValidSHA256Hex(res.SHA256) {
 		t.Fatalf("unexpected trust result: %+v", res)
 	}
 
@@ -78,7 +78,7 @@ func TestFabrial_TrustCommand(t *testing.T) {
 	// 4. Remove pin
 	stdout.Reset()
 	stderr.Reset()
-	code = runTrust([]string{"remove", "shield"}, storePath, lookup, &stdout, &stderr)
+	code = runTrust([]string{"remove", "halfshard"}, storePath, lookup, &stdout, &stderr)
 	if code != 0 || !strings.Contains(stdout.String(), "Removed") {
 		t.Fatalf("runTrust remove failed (code=%d): out=%q err=%q", code, stdout.String(), stderr.String())
 	}

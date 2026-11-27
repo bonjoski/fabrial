@@ -102,7 +102,7 @@ func TestFixer_FormatFixTable(t *testing.T) {
 			Details:     "/path/to/sock",
 		},
 		{
-			Pillar:      PillarShield,
+			Pillar:      PillarHalfshard,
 			Description: "Started wire guard proxy daemon",
 			Success:     true,
 			Details:     "127.0.0.1:8443",
@@ -113,7 +113,7 @@ func TestFixer_FormatFixTable(t *testing.T) {
 	if !strings.Contains(tbl, "Fabrial Sovereign Security Fabric — Remediation Actions") {
 		t.Fatalf("missing table header: %s", tbl)
 	}
-	if !strings.Contains(tbl, "Locksmith") || !strings.Contains(tbl, "Shield") {
+	if !strings.Contains(tbl, "Locksmith") || !strings.Contains(tbl, "Halfshard") {
 		t.Fatalf("missing expected pillars in fix table: %s", tbl)
 	}
 
@@ -142,7 +142,7 @@ func TestFixer_OptionalPillars_State1AndState3(t *testing.T) {
 	homeDir := t.TempDir()
 	t.Setenv("HOME", homeDir)
 
-	// State 1: shield absent & unrequired -> FixPillar("shield") skips cleanly without creating ~/.shield
+	// State 1: halfshard absent & unrequired -> FixPillar("Halfshard") skips cleanly without creating ~/.halfshard
 	emptyBin := t.TempDir()
 	workDir := t.TempDir()
 	inspector := NewInspector(100 * time.Millisecond)
@@ -150,25 +150,25 @@ func TestFixer_OptionalPillars_State1AndState3(t *testing.T) {
 	dm := newMockDaemonManager()
 	fixer := NewFixer(inspector, dm, workDir)
 
-	actions, rep := fixer.FixPillar(ctx, PillarShield)
+	actions, rep := fixer.FixPillar(ctx, PillarHalfshard)
 	if rep.Status != StatusOptional {
-		t.Fatalf("State 1: expected StatusOptional for explicit FixPillar(Shield), got %+v", rep)
+		t.Fatalf("State 1: expected StatusOptional for explicit FixPillar(Halfshard), got %+v", rep)
 	}
 	if len(actions) != 1 || !actions[0].Success {
 		t.Fatalf("State 1: expected single clean skip action, got %+v", actions)
 	}
-	if _, err := os.Stat(filepath.Join(homeDir, ".shield")); !os.IsNotExist(err) {
-		t.Fatalf("State 1: FixPillar must not create ~/.shield when Shield is absent")
+	if _, err := os.Stat(filepath.Join(homeDir, ".halfshard")); !os.IsNotExist(err) {
+		t.Fatalf("State 1: FixPillar must not create ~/.halfshard when Halfshard is absent")
 	}
-	if dm.started["shield"] {
-		t.Fatalf("State 1: FixPillar must not attempt to start Shield daemon")
+	if dm.started["halfshard"] {
+		t.Fatalf("State 1: FixPillar must not attempt to start Halfshard daemon")
 	}
 
-	// State 3: require_shield: true & missing binary -> FixPillar fails closed with Required=true
-	if err := os.WriteFile(filepath.Join(workDir, "fabrial.yaml"), []byte("version: \"1\"\nrequire_shield: true\n"), 0644); err != nil {
+	// State 3: require_halfshard: true & missing binary -> FixPillar fails closed with Required=true
+	if err := os.WriteFile(filepath.Join(workDir, "fabrial.yaml"), []byte("version: \"1\"\nrequire_halfshard: true\n"), 0644); err != nil {
 		t.Fatalf("write fabrial.yaml: %v", err)
 	}
-	actions3, rep3 := fixer.FixPillar(ctx, PillarShield)
+	actions3, rep3 := fixer.FixPillar(ctx, PillarHalfshard)
 	if rep3.Status != StatusOffline || !rep3.Required {
 		t.Fatalf("State 3: expected StatusOffline+Required, got %+v", rep3)
 	}

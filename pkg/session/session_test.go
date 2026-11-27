@@ -23,9 +23,9 @@ func TestSession_BeginAndDerive(t *testing.T) {
 	masterCfg := SessionConfig{
 		TTL:                10 * time.Minute,
 		AllowedScopes:      []string{"read", "test", "build"},
-		BiometricPreflight: true,
-		ShieldProxyAddr:    "127.0.0.1:8443",
-		ShieldCACertPath:   "/tmp/shield-ca.crt",
+		BiometricPreflight:  true,
+		HalfshardProxyAddr:  "127.0.0.1:8443",
+		HalfshardCACertPath: "/tmp/halfshard-ca.crt",
 	}
 
 	masterGrant, err := sm.BeginSession(ctx, masterCfg)

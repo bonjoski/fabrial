@@ -361,8 +361,8 @@ func TestRoute_SoulcasterBuildWrapping(t *testing.T) {
 	}
 }
 
-func TestRoute_ShieldProxyInjection(t *testing.T) {
-	// Start dummy listener to simulate active Shield proxy
+func TestRoute_HalfshardProxyInjection(t *testing.T) {
+	// Start dummy listener to simulate active Halfshard proxy
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("failed to listen on test tcp port: %v", err)
@@ -370,15 +370,8 @@ func TestRoute_ShieldProxyInjection(t *testing.T) {
 	defer ln.Close()
 
 	addr := ln.Addr().String()
-	origEnv := os.Getenv("SHIELD_PROXY_ADDR")
-	defer func() {
-		if origEnv != "" {
-			_ = os.Setenv("SHIELD_PROXY_ADDR", origEnv)
-		} else {
-			_ = os.Unsetenv("SHIELD_PROXY_ADDR")
-		}
-	}()
-	_ = os.Setenv("SHIELD_PROXY_ADDR", addr)
+	t.Setenv("HALFSHARD_PROXY_ADDR", addr)
+	t.Setenv("SHIELD_PROXY_ADDR", "")
 
 	opts := &ExecutionOptions{
 		Net:    true,
@@ -392,14 +385,17 @@ func TestRoute_ShieldProxyInjection(t *testing.T) {
 	}
 
 	foundProxy := false
+	foundActive := false
 	for _, env := range dec.InjectedEnv {
 		if strings.HasPrefix(env, "HTTP_PROXY=") && strings.Contains(env, addr) {
 			foundProxy = true
-			break
+		}
+		if env == "SOVEREIGN_HALFSHARD_ACTIVE=1" {
+			foundActive = true
 		}
 	}
-	if !foundProxy {
-		t.Errorf("expected HTTP_PROXY injected with %s, got env: %v", addr, dec.InjectedEnv)
+	if !foundProxy || !foundActive {
+		t.Errorf("expected HTTP_PROXY (%s) and SOVEREIGN_HALFSHARD_ACTIVE=1 injected, got env: %v", addr, dec.InjectedEnv)
 	}
 }
 

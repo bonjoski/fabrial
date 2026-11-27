@@ -403,13 +403,13 @@ func TestAdversarial_SubagentTaskInjection(t *testing.T) {
 	}
 }
 
-// TestAdversarial_ShieldFailClosed asserts that when fail_closed is enabled for Shield,
+// TestAdversarial_HalfshardFailClosed asserts that when fail_closed is enabled for Halfshard,
 // network operations fail closed immediately when the proxy is offline.
-func TestAdversarial_ShieldFailClosed(t *testing.T) {
+func TestAdversarial_HalfshardFailClosed(t *testing.T) {
 	tmpDir := t.TempDir()
 	policyFile := filepath.Join(tmpDir, "fabrial.yaml")
 	policyContent := `version: "2.0"
-shield:
+halfshard:
   enabled: true
   proxy_addr: "127.0.0.1:19999" # offline port
   fail_closed: true
@@ -426,10 +426,10 @@ shield:
 
 	_, err := Route(opts, []string{"curl", "https://api.openai.com"})
 	if err == nil {
-		t.Fatalf("FAIL-OPEN: expected Route to abort when Shield proxy is offline and fail_closed: true")
+		t.Fatalf("FAIL-OPEN: expected Route to abort when Halfshard proxy is offline and fail_closed: true")
 	}
-	if !strings.Contains(err.Error(), "Shield wire guard proxy offline") {
-		t.Fatalf("expected error mentioning Shield proxy offline, got: %v", err)
+	if !strings.Contains(err.Error(), "Halfshard wire guard proxy offline") {
+		t.Fatalf("expected error mentioning Halfshard proxy offline, got: %v", err)
 	}
 }
 
@@ -597,10 +597,11 @@ func TestAdversarial_ArchiveZipSlipEscalation(t *testing.T) {
 // TestAdversarial_OptionalPillars_3StateRouting verifies State 1 (invisible),
 // State 2 (auto-discovered), and State 3 (fail-closed exit 126 on missing/spoofed required binaries).
 func TestAdversarial_OptionalPillars_3StateRouting(t *testing.T) {
-	// Ensure no stale SHIELD_PROXY_ADDR interferes
+	// Ensure no stale HALFSHARD_PROXY_ADDR / SHIELD_PROXY_ADDR interferes
+	t.Setenv("HALFSHARD_PROXY_ADDR", "")
 	t.Setenv("SHIELD_PROXY_ADDR", "")
 
-	t.Run("State1_ShieldAbsent_NetDoesNotFailOrInjectDeadProxy", func(t *testing.T) {
+	t.Run("State1_HalfshardAbsent_NetDoesNotFailOrInjectDeadProxy", func(t *testing.T) {
 		emptyBin := t.TempDir()
 		workDir := t.TempDir()
 		policyFile := filepath.Join(workDir, "fabrial.yaml")
@@ -616,22 +617,23 @@ func TestAdversarial_OptionalPillars_3StateRouting(t *testing.T) {
 			PillarResolver: &pillars.Resolver{Lookup: pillars.LookupInPATH(emptyBin)},
 		}, []string{"curl", "https://example.com"})
 		if err != nil {
-			t.Fatalf("State 1: Route with --net failed when shield is absent & unrequired: %v", err)
+			t.Fatalf("State 1: Route with --net failed when halfshard is absent & unrequired: %v", err)
 		}
 		for _, env := range dec.InjectedEnv {
-			if strings.HasPrefix(env, "HTTP_PROXY=") || strings.HasPrefix(env, "SOVEREIGN_SHIELD_ACTIVE=") {
-				t.Fatalf("State 1: injected dead Shield proxy env %q when shield is absent", env)
+			if strings.HasPrefix(env, "HTTP_PROXY=") || strings.HasPrefix(env, "SOVEREIGN_HALFSHARD_ACTIVE=") {
+				t.Fatalf("State 1: injected dead Halfshard proxy env %q when halfshard is absent", env)
 			}
 		}
 	})
 
-	t.Run("State3_RequireShieldOrStormcageMissing_FailClosedExit126", func(t *testing.T) {
+	t.Run("State3_RequireHalfshardOrStormcageMissing_FailClosedExit126", func(t *testing.T) {
 		emptyBin := t.TempDir()
 		for _, tc := range []struct {
 			name string
 			yaml string
 		}{
-			{"RequireShield", "version: \"1\"\nrequire_shield: true\n"},
+			{"RequireHalfshard", "version: \"1\"\nrequire_halfshard: true\n"},
+			{"LegacyRequireShieldAlias", "version: \"1\"\nrequire_shield: true\n"},
 			{"RequireStormcage", "version: \"1\"\nrequire_stormcage: true\n"},
 		} {
 			t.Run(tc.name, func(t *testing.T) {
@@ -660,15 +662,15 @@ func TestAdversarial_OptionalPillars_3StateRouting(t *testing.T) {
 			t.Skip("POSIX permission/symlink test")
 		}
 		binDir := t.TempDir()
-		// Non-executable shield + spoofed symlink stormcage -> /bin/sh
-		if err := os.WriteFile(filepath.Join(binDir, "shield"), []byte("#!/bin/sh\nexit 0\n"), 0644); err != nil {
-			t.Fatalf("write non-exec shield: %v", err)
+		// Non-executable halfshard + spoofed symlink stormcage -> /bin/sh
+		if err := os.WriteFile(filepath.Join(binDir, "halfshard"), []byte("#!/bin/sh\nexit 0\n"), 0644); err != nil {
+			t.Fatalf("write non-exec halfshard: %v", err)
 		}
 		if err := os.Symlink("/bin/sh", filepath.Join(binDir, "stormcage")); err != nil {
 			t.Fatalf("symlink stormcage: %v", err)
 		}
 
-		for _, field := range []string{"require_shield: true", "require_stormcage: true"} {
+		for _, field := range []string{"require_halfshard: true", "require_stormcage: true"} {
 			pFile := filepath.Join(t.TempDir(), "fabrial.yaml")
 			if err := os.WriteFile(pFile, []byte("version: \"1\"\n"+field+"\n"), 0644); err != nil {
 				t.Fatalf("write policy: %v", err)

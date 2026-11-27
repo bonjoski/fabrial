@@ -31,7 +31,7 @@ func TestDoctor_InspectAll_CanonicalOrdering(t *testing.T) {
 	inspector := NewInspector(1 * time.Second)
 	inspector.Resolver = &pillars.Resolver{
 		Lookup: pillars.StaticLookup(map[string]string{
-			"shield":    "/opt/homebrew/Cellar/shield/0.4.0/bin/shield",
+			"halfshard": "/opt/homebrew/Cellar/halfshard/0.4.0/bin/halfshard",
 			"stormcage": "/opt/homebrew/Cellar/stormcage/0.4.0/bin/stormcage",
 		}),
 		DisableTrustStore: true,
@@ -72,14 +72,14 @@ func TestDoctor_OptionalPillars_3StateContract(t *testing.T) {
 		}
 
 		tbl := FormatTable(results)
-		if strings.Contains(tbl, "Shield") || strings.Contains(tbl, "Stormcage") {
+		if strings.Contains(tbl, "Halfshard") || strings.Contains(tbl, "Stormcage") {
 			t.Fatalf("State 1: FormatTable leaked absent optional pillars:\n%s", tbl)
 		}
 		jsonBytes, err := FormatJSON(results)
 		if err != nil {
 			t.Fatalf("FormatJSON failed: %v", err)
 		}
-		if strings.Contains(string(jsonBytes), "Shield") || strings.Contains(string(jsonBytes), "Stormcage") {
+		if strings.Contains(string(jsonBytes), "Halfshard") || strings.Contains(string(jsonBytes), "Stormcage") {
 			t.Fatalf("State 1: FormatJSON leaked absent optional pillars:\n%s", string(jsonBytes))
 		}
 		if ffe := CheckRequiredHealth(results); ffe != nil {
@@ -91,7 +91,7 @@ func TestDoctor_OptionalPillars_3StateContract(t *testing.T) {
 		inspector := NewInspector(500 * time.Millisecond)
 		inspector.Resolver = &pillars.Resolver{
 			Lookup: pillars.StaticLookup(map[string]string{
-				"shield":    "/opt/homebrew/Cellar/shield/0.4.0/bin/shield",
+				"halfshard": "/opt/homebrew/Cellar/halfshard/0.4.0/bin/halfshard",
 				"stormcage": "/opt/homebrew/Cellar/stormcage/0.4.0/bin/stormcage",
 			}),
 			DisableTrustStore: true,
@@ -102,8 +102,8 @@ func TestDoctor_OptionalPillars_3StateContract(t *testing.T) {
 			t.Fatalf("State 2: expected %d pillars, got %d", len(CanonicalOrder), len(results))
 		}
 		tbl := FormatTable(results)
-		if !strings.Contains(tbl, "Shield") || !strings.Contains(tbl, "Stormcage") {
-			t.Fatalf("State 2: expected Shield and Stormcage in FormatTable:\n%s", tbl)
+		if !strings.Contains(tbl, "Halfshard") || !strings.Contains(tbl, "Stormcage") {
+			t.Fatalf("State 2: expected Halfshard and Stormcage in FormatTable:\n%s", tbl)
 		}
 		if ffe := CheckRequiredHealth(results); ffe != nil {
 			t.Fatalf("State 2 (unrequired): unexpected required health failure: %v", ffe)
@@ -113,7 +113,7 @@ func TestDoctor_OptionalPillars_3StateContract(t *testing.T) {
 	t.Run("State3_RequiredMissing_FailClosedExit126", func(t *testing.T) {
 		emptyBin := t.TempDir()
 		workDir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(workDir, "fabrial.yaml"), []byte("version: \"1\"\nrequire_shield: true\nrequire_stormcage: true\n"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(workDir, "fabrial.yaml"), []byte("version: \"1\"\nrequire_halfshard: true\nrequire_stormcage: true\n"), 0644); err != nil {
 			t.Fatalf("write fabrial.yaml: %v", err)
 		}
 
@@ -121,12 +121,12 @@ func TestDoctor_OptionalPillars_3StateContract(t *testing.T) {
 		inspector.Resolver = &pillars.Resolver{Lookup: pillars.LookupInPATH(emptyBin)}
 		results := inspector.InspectAll(ctx, workDir)
 
-		var sawShield, sawStormcage bool
+		var sawHalfshard, sawStormcage bool
 		for _, r := range results {
-			if r.Pillar == PillarShield {
-				sawShield = true
+			if r.Pillar == PillarHalfshard {
+				sawHalfshard = true
 				if r.Status != StatusOffline || !r.Required {
-					t.Fatalf("State 3: expected Shield OFFLINE+Required, got %+v", r)
+					t.Fatalf("State 3: expected Halfshard OFFLINE+Required, got %+v", r)
 				}
 			}
 			if r.Pillar == PillarStormcage {
@@ -136,8 +136,8 @@ func TestDoctor_OptionalPillars_3StateContract(t *testing.T) {
 				}
 			}
 		}
-		if !sawShield || !sawStormcage {
-			t.Fatalf("State 3: expected both required missing pillars in report, sawShield=%v sawStormcage=%v", sawShield, sawStormcage)
+		if !sawHalfshard || !sawStormcage {
+			t.Fatalf("State 3: expected both required missing pillars in report, sawHalfshard=%v sawStormcage=%v", sawHalfshard, sawStormcage)
 		}
 
 		ffe := CheckRequiredHealth(results)
@@ -156,7 +156,7 @@ func TestDoctor_FormatTableAndJSON(t *testing.T) {
 	inspector := NewInspector(500 * time.Millisecond)
 	inspector.Resolver = &pillars.Resolver{
 		Lookup: pillars.StaticLookup(map[string]string{
-			"shield":    "/opt/homebrew/Cellar/shield/0.4.0/bin/shield",
+			"halfshard": "/opt/homebrew/Cellar/halfshard/0.4.0/bin/halfshard",
 			"stormcage": "/opt/homebrew/Cellar/stormcage/0.4.0/bin/stormcage",
 		}),
 		DisableTrustStore: true,

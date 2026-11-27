@@ -17,13 +17,13 @@ import (
 // adversarial tests exercise authentic Mach-O/ELF debug/buildinfo & SHA-256 verification
 // in <200ms total without recompiling per subtest.
 var (
-	fixtureOnce       sync.Once
-	fixtureErr        error
-	fixtureRoot       string
-	genuineShieldBin  string
-	genuineStormBin   string
-	evilCollisionBin  string
-	forgedShieldBin   string
+	fixtureOnce         sync.Once
+	fixtureErr          error
+	fixtureRoot         string
+	genuineHalfshardBin string
+	genuineStormBin     string
+	evilCollisionBin    string
+	forgedHalfshardBin  string
 )
 
 func TestMain(m *testing.M) {
@@ -72,7 +72,7 @@ func ensureCompiledFixtures(t *testing.T) {
 		}
 		fixtureRoot = dir
 
-		genuineShieldBin, fixtureErr = buildRealGoFixture(dir, "github.com/bonjoski/shield", "cmd/shield", "shield", "genuine")
+		genuineHalfshardBin, fixtureErr = buildRealGoFixture(dir, "github.com/bonjoski/halfshard", "cmd/halfshard", "halfshard", "genuine")
 		if fixtureErr != nil {
 			return
 		}
@@ -80,11 +80,11 @@ func ensureCompiledFixtures(t *testing.T) {
 		if fixtureErr != nil {
 			return
 		}
-		evilCollisionBin, fixtureErr = buildRealGoFixture(dir, "github.com/evil/shield", "cmd/shield", "shield", "thirdparty")
+		evilCollisionBin, fixtureErr = buildRealGoFixture(dir, "github.com/evil/halfshard", "cmd/halfshard", "halfshard", "thirdparty")
 		if fixtureErr != nil {
 			return
 		}
-		forgedShieldBin, fixtureErr = buildRealGoFixture(dir, "github.com/bonjoski/shield", "cmd/shield", "shield", "forged-trojan-v2")
+		forgedHalfshardBin, fixtureErr = buildRealGoFixture(dir, "github.com/bonjoski/halfshard", "cmd/halfshard", "halfshard", "forged-trojan-v2")
 	})
 	if fixtureErr != nil {
 		t.Fatalf("compile Go provenance fixtures: %v", fixtureErr)
@@ -114,17 +114,17 @@ func installFixtureCopy(t *testing.T, srcBin, dstDir, name string) string {
 func TestResolve_State1_AbsentAndUnrequired(t *testing.T) {
 	emptyDir := t.TempDir()
 	r := &Resolver{Lookup: LookupInPATH(emptyDir), DisableTrustStore: true}
-	req := Requirements{RequireShield: false, RequireStormcage: false}
+	req := Requirements{RequireHalfshard: false, RequireStormcage: false}
 
-	shieldRes := r.ResolveShield(req)
-	if shieldRes.State != StateAbsent {
-		t.Fatalf("expected Shield StateAbsent, got %s", shieldRes.State)
+	hsRes := r.ResolveHalfshard(req)
+	if hsRes.State != StateAbsent {
+		t.Fatalf("expected Halfshard StateAbsent, got %s", hsRes.State)
 	}
-	if shieldRes.IsVisible() || shieldRes.IsActive() {
-		t.Fatalf("expected Shield invisible and inactive in State 1, got %+v", shieldRes)
+	if hsRes.IsVisible() || hsRes.IsActive() {
+		t.Fatalf("expected Halfshard invisible and inactive in State 1, got %+v", hsRes)
 	}
-	if shieldRes.Err != nil {
-		t.Fatalf("expected nil Err in State 1, got %v", shieldRes.Err)
+	if hsRes.Err != nil {
+		t.Fatalf("expected nil Err in State 1, got %v", hsRes.Err)
 	}
 
 	scRes := r.ResolveStormcage(req)
@@ -143,24 +143,24 @@ func TestResolve_State1_AbsentAndUnrequired(t *testing.T) {
 func TestResolve_State2_InstalledAutoDiscoveredWithBuildInfo(t *testing.T) {
 	ensureCompiledFixtures(t)
 	binDir := t.TempDir()
-	shieldPath := installFixtureCopy(t, genuineShieldBin, binDir, "shield")
+	hsPath := installFixtureCopy(t, genuineHalfshardBin, binDir, "halfshard")
 	scPath := installFixtureCopy(t, genuineStormBin, binDir, "stormcage")
 
 	r := &Resolver{Lookup: LookupInPATH(binDir), DisableTrustStore: true}
-	req := Requirements{RequireShield: false, RequireStormcage: false}
+	req := Requirements{RequireHalfshard: false, RequireStormcage: false}
 
-	shieldRes := r.ResolveShield(req)
-	if shieldRes.State != StateInstalled {
-		t.Fatalf("expected Shield StateInstalled, got %s (err=%v)", shieldRes.State, shieldRes.Err)
+	hsRes := r.ResolveHalfshard(req)
+	if hsRes.State != StateInstalled {
+		t.Fatalf("expected Halfshard StateInstalled, got %s (err=%v)", hsRes.State, hsRes.Err)
 	}
-	if !shieldRes.IsVisible() || !shieldRes.IsActive() {
-		t.Fatalf("expected Shield visible and active in State 2, got %+v", shieldRes)
+	if !hsRes.IsVisible() || !hsRes.IsActive() {
+		t.Fatalf("expected Halfshard visible and active in State 2, got %+v", hsRes)
 	}
-	if shieldRes.BinaryPath != shieldPath {
-		t.Fatalf("expected canonical BinaryPath=%s, got %s", shieldPath, shieldRes.BinaryPath)
+	if hsRes.BinaryPath != hsPath {
+		t.Fatalf("expected canonical BinaryPath=%s, got %s", hsPath, hsRes.BinaryPath)
 	}
-	if shieldRes.ModulePath != "github.com/bonjoski/shield" {
-		t.Fatalf("expected ModulePath=github.com/bonjoski/shield, got %q", shieldRes.ModulePath)
+	if hsRes.ModulePath != "github.com/bonjoski/halfshard" {
+		t.Fatalf("expected ModulePath=github.com/bonjoski/halfshard, got %q", hsRes.ModulePath)
 	}
 
 	scRes := r.ResolveStormcage(req)
@@ -174,7 +174,7 @@ func TestResolve_State2_InstalledAutoDiscoveredWithBuildInfo(t *testing.T) {
 		t.Fatalf("expected ModulePath=github.com/bonjoski/stormcage, got %q", scRes.ModulePath)
 	}
 
-	if err := r.EnforceRequired(Requirements{RequireShield: true, RequireStormcage: true}); err != nil {
+	if err := r.EnforceRequired(Requirements{RequireHalfshard: true, RequireStormcage: true}); err != nil {
 		t.Fatalf("expected EnforceRequired nil when both verified binaries installed, got %v", err)
 	}
 }
@@ -182,13 +182,13 @@ func TestResolve_State2_InstalledAutoDiscoveredWithBuildInfo(t *testing.T) {
 func TestResolve_State2_PartialInstall(t *testing.T) {
 	ensureCompiledFixtures(t)
 	binDir := t.TempDir()
-	installFixtureCopy(t, genuineShieldBin, binDir, "shield")
+	installFixtureCopy(t, genuineHalfshardBin, binDir, "halfshard")
 
 	r := &Resolver{Lookup: LookupInPATH(binDir), DisableTrustStore: true}
 	req := Requirements{}
 
-	if got := r.ResolveShield(req).State; got != StateInstalled {
-		t.Fatalf("expected Shield StateInstalled, got %s", got)
+	if got := r.ResolveHalfshard(req).State; got != StateInstalled {
+		t.Fatalf("expected Halfshard StateInstalled, got %s", got)
 	}
 	if got := r.ResolveStormcage(req).State; got != StateAbsent {
 		t.Fatalf("expected Stormcage StateAbsent, got %s", got)
@@ -205,7 +205,8 @@ func TestResolve_State3_RequiredMissingFailClosed(t *testing.T) {
 		req    Requirements
 		field  string
 	}{
-		{"ShieldRequiredMissing", Shield, Requirements{RequireShield: true}, "require_shield"},
+		{"HalfshardRequiredMissing", Halfshard, Requirements{RequireHalfshard: true}, "require_halfshard"},
+		{"LegacyRequireShieldAliasMissing", Halfshard, Requirements{RequireShield: true}, "require_halfshard"},
 		{"StormcageRequiredMissing", Stormcage, Requirements{RequireStormcage: true}, "require_stormcage"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -245,27 +246,27 @@ func TestResolve_State3_RequiredMissingFailClosed(t *testing.T) {
 func TestTrustPillar_RoundTripAndStrictPinning(t *testing.T) {
 	ensureCompiledFixtures(t)
 	binDir := t.TempDir()
-	shieldPath := installFixtureCopy(t, genuineShieldBin, binDir, "shield")
+	hsPath := installFixtureCopy(t, genuineHalfshardBin, binDir, "halfshard")
 	storePath := filepath.Join(t.TempDir(), ".fabrial", "trusted-pillars.json")
 
-	res, err := TrustPillar("shield", storePath, LookupInPATH(binDir))
+	res, err := TrustPillar("halfshard", storePath, LookupInPATH(binDir))
 	if err != nil {
 		t.Fatalf("TrustPillar failed: %v", err)
 	}
-	if res.BinaryPath != shieldPath {
-		t.Fatalf("expected pinned BinaryPath=%s, got %s", shieldPath, res.BinaryPath)
+	if res.BinaryPath != hsPath {
+		t.Fatalf("expected pinned BinaryPath=%s, got %s", hsPath, res.BinaryPath)
 	}
 	if !IsValidSHA256Hex(res.SHA256) {
 		t.Fatalf("invalid SHA256 returned: %q", res.SHA256)
 	}
 
 	r := &Resolver{Lookup: LookupInPATH(binDir), TrustStorePath: storePath}
-	resolved := r.ResolveShield(Requirements{RequireShield: true, StrictPillarPinning: true})
+	resolved := r.ResolveHalfshard(Requirements{RequireHalfshard: true, StrictPillarPinning: true})
 	if resolved.State != StateInstalled || resolved.SHA256 != res.SHA256 {
 		t.Fatalf("expected StateInstalled with matching SHA256, got %+v", resolved)
 	}
 
-	removed, err := RemoveTrustedPillar("shield", storePath)
+	removed, err := RemoveTrustedPillar("halfshard", storePath)
 	if err != nil || !removed {
 		t.Fatalf("RemoveTrustedPillar failed: removed=%v err=%v", removed, err)
 	}
@@ -274,18 +275,18 @@ func TestTrustPillar_RoundTripAndStrictPinning(t *testing.T) {
 func TestLoadRequirements_FromFabrialYAML(t *testing.T) {
 	dir := t.TempDir()
 
-	// Default (no fabrial.yaml): both false
+	// Default (no fabrial.yaml): all false
 	req, err := LoadRequirements("", dir)
 	if err != nil {
 		t.Fatalf("LoadRequirements without file failed: %v", err)
 	}
-	if req.RequireShield || req.RequireStormcage || req.StrictPillarPinning {
+	if req.IsHalfshardRequired() || req.RequireStormcage || req.StrictPillarPinning {
 		t.Fatalf("expected all requirements false by default, got %+v", req)
 	}
 
-	// Explicit fabrial.yaml with require_shield, require_stormcage, strict_pillar_pinning & pillar_digests
+	// Explicit fabrial.yaml with require_halfshard, require_stormcage, strict_pillar_pinning & pillar_digests
 	digest := strings.Repeat("a", 64)
-	yamlContent := "version: \"1\"\nrequire_shield: true\nrequire_stormcage: true\nstrict_pillar_pinning: true\npillar_digests:\n  shield: \"" + digest + "\"\n"
+	yamlContent := "version: \"1\"\nrequire_halfshard: true\nrequire_stormcage: true\nstrict_pillar_pinning: true\npillar_digests:\n  halfshard: \"" + digest + "\"\n"
 	yamlPath := filepath.Join(dir, "fabrial.yaml")
 	if err := os.WriteFile(yamlPath, []byte(yamlContent), 0644); err != nil {
 		t.Fatalf("write fabrial.yaml: %v", err)
@@ -295,10 +296,23 @@ func TestLoadRequirements_FromFabrialYAML(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadRequirements with file failed: %v", err)
 	}
-	if !req2.RequireShield || !req2.RequireStormcage || !req2.StrictPillarPinning {
+	if !req2.IsHalfshardRequired() || !req2.RequireStormcage || !req2.StrictPillarPinning {
 		t.Fatalf("expected all requirement flags true, got %+v", req2)
 	}
-	if req2.PillarDigests["shield"] != digest {
-		t.Fatalf("expected pillar_digests.shield=%s, got %q", digest, req2.PillarDigests["shield"])
+	if req2.PillarDigests["halfshard"] != digest {
+		t.Fatalf("expected pillar_digests.halfshard=%s, got %q", digest, req2.PillarDigests["halfshard"])
+	}
+
+	// Backward-compatible legacy require_shield: true MUST monotonically require Halfshard.
+	legacyDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(legacyDir, "fabrial.yaml"), []byte("version: \"1\"\nrequire_shield: true\n"), 0644); err != nil {
+		t.Fatalf("write legacy fabrial.yaml: %v", err)
+	}
+	reqLegacy, err := LoadRequirements("", legacyDir)
+	if err != nil {
+		t.Fatalf("LoadRequirements legacy failed: %v", err)
+	}
+	if !reqLegacy.IsHalfshardRequired() {
+		t.Fatalf("FAIL-OPEN: legacy require_shield: true did not set IsHalfshardRequired()=true")
 	}
 }
